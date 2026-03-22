@@ -26,6 +26,10 @@ def run_movenet(frame):
     interpreter.invoke()
 
     keypoints = interpreter.get_tensor(output_details[0]["index"])
+
+    print("keypoints shape:", keypoints.shape)
+    print("keypoints:", keypoints)
+
     return keypoints
 
 
