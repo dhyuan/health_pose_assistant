@@ -15,7 +15,9 @@ output_details = interpreter.get_output_details()
 def run_movenet(frame):
     img = cv2.resize(frame, (192, 192))
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img = np.expand_dims(img, axis=0).astype(np.float32)
+    img = np.expand_dims(img, axis=0).astype(np.uint8)
+
+    print(input_details)
 
     interpreter.set_tensor(input_details[0]["index"], img)
     interpreter.invoke()
