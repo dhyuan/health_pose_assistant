@@ -6,9 +6,12 @@ import tensorflow as tf
 
 # ===== MoveNet 加载 =====
 interpreter = tf.lite.Interpreter(model_path="movenet_lightning.tflite")
-interpreter.allocate_tensors()
 
 input_details = interpreter.get_input_details()
+# 👇 关键：手动指定输入尺寸
+interpreter.resize_tensor_input(input_details[0]["index"], [1, 192, 192, 3])
+interpreter.allocate_tensors()
+
 output_details = interpreter.get_output_details()
 
 
