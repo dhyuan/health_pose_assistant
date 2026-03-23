@@ -31,35 +31,40 @@ import numpy as np
 # ══════════════════════════════════════════════════════════════
 CONFIG = {
     # 网络
-    "host": "",           # 空字符串 = 监听所有网卡
+    "host": "",  # 空字符串 = 监听所有网卡
     "port": 9999,
-
     # 坐姿检测
-    "posture_torso_threshold": 150,   # 躯干角 < 此值 → 驼背警告（度）
-    "posture_alert_seconds":  3,      # 持续多少秒才触发警告，避免误报
-
+    "posture_torso_threshold": 150,  # 躯干角 < 此值 → 驼背警告（度）
+    "posture_alert_seconds": 3,  # 持续多少秒才触发警告，避免误报
     # 运动计数
-    "squat_down_angle":   100,        # 髋-膝-踝角度 < 此值 → 判定为蹲下
-    "squat_up_angle":     160,        # 髋-膝-踝角度 > 此值 → 判定为站立
-    "pushup_down_angle":   90,        # 肩-肘-腕角度 < 此值 → 判定为下压
-    "pushup_up_angle":    160,        # 肩-肘-腕角度 > 此值 → 判定为撑起
-
+    "squat_down_angle": 100,  # 髋-膝-踝角度 < 此值 → 判定为蹲下
+    "squat_up_angle": 160,  # 髋-膝-踝角度 > 此值 → 判定为站立
+    "pushup_down_angle": 90,  # 肩-肘-腕角度 < 此值 → 判定为下压
+    "pushup_up_angle": 160,  # 肩-肘-腕角度 > 此值 → 判定为撑起
     # 久坐提醒
-    "sitting_alert_minutes": 45,      # 连续坐满多少分钟提醒
-    "sitting_stand_seconds": 10,      # 检测到站立多少秒才重置计时器
+    "sitting_alert_minutes": 45,  # 连续坐满多少分钟提醒
+    "sitting_stand_seconds": 10,  # 检测到站立多少秒才重置计时器
 }
 
 # MoveNet 17点 → MediaPipe 33点，常用关键点索引
 KP = {
-    "nose":            0,
-    "left_eye":        1,  "right_eye":        2,
-    "left_ear":        3,  "right_ear":         4,
-    "left_shoulder":  11,  "right_shoulder":   12,
-    "left_elbow":     13,  "right_elbow":      14,
-    "left_wrist":     15,  "right_wrist":      16,
-    "left_hip":       23,  "right_hip":        24,
-    "left_knee":      25,  "right_knee":       26,
-    "left_ankle":     27,  "right_ankle":      28,
+    "nose": 0,
+    "left_eye": 1,
+    "right_eye": 2,
+    "left_ear": 3,
+    "right_ear": 4,
+    "left_shoulder": 11,
+    "right_shoulder": 12,
+    "left_elbow": 13,
+    "right_elbow": 14,
+    "left_wrist": 15,
+    "right_wrist": 16,
+    "left_hip": 23,
+    "right_hip": 24,
+    "left_knee": 25,
+    "right_knee": 26,
+    "left_ankle": 27,
+    "right_ankle": 28,
 }
 
 
@@ -67,20 +72,24 @@ KP = {
 #  工具函数
 # ══════════════════════════════════════════════════════════════
 
+
 def angle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
     """三点角度，b 为顶点，返回 0~180°"""
     ba, bc = a - b, c - b
     cos = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-6)
     return float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))
 
+
 def lm_xy(landmarks, idx: int) -> np.ndarray:
     """取关键点 (x, y)，归一化坐标"""
     p = landmarks[idx]
     return np.array([p.x, p.y])
 
+
 def lm_visible(landmarks, idx: int, threshold=0.4) -> bool:
     """关键点可见性是否足够"""
     return landmarks[idx].visibility > threshold
+
 
 def both_visible(landmarks, *indices, threshold=0.4) -> bool:
     return all(lm_visible(landmarks, i, threshold) for i in indices)
@@ -90,6 +99,7 @@ def both_visible(landmarks, *indices, threshold=0.4) -> bool:
 #  检测模块 1：坐姿 / 驼背
 # ══════════════════════════════════════════════════════════════
 
+
 class PostureDetector:
     """
     检测逻辑：
@@ -97,10 +107,11 @@ class PostureDetector:
         正常坐直 ≈ 170°，驼背前倾时角度变小
       - 使用左右两侧平均值，减少单侧遮挡误差
     """
+
     def __init__(self, torso_threshold: float, alert_seconds: float):
         self.torso_threshold = torso_threshold
-        self.alert_seconds   = alert_seconds
-        self._bad_start: float | None = None   # 开始驼背的时间戳
+        self.alert_seconds = alert_seconds
+        self._bad_start: float | None = None  # 开始驼背的时间戳
 
     def update(self, landmarks) -> dict:
         result = {"status": "unknown", "torso_angle": None, "alert": False}
@@ -115,7 +126,9 @@ class PostureDetector:
             )
             angles.append(a)
         # 右侧：右耳→右肩→右髋
-        if both_visible(landmarks, KP["right_ear"], KP["right_shoulder"], KP["right_hip"]):
+        if both_visible(
+            landmarks, KP["right_ear"], KP["right_shoulder"], KP["right_hip"]
+        ):
             a = angle(
                 lm_xy(landmarks, KP["right_ear"]),
                 lm_xy(landmarks, KP["right_shoulder"]),
@@ -147,22 +160,24 @@ class PostureDetector:
 #  检测模块 2：运动计数（深蹲 + 俯卧撑）
 # ══════════════════════════════════════════════════════════════
 
+
 class ExerciseCounter:
     """
     状态机计数：
       down → up 算一次完整动作
     支持深蹲和俯卧撑，通过不同关节角度区分。
     """
+
     def __init__(self, cfg: dict):
-        self.squat_count  = 0
+        self.squat_count = 0
         self.pushup_count = 0
-        self._squat_state  = "up"    # "up" | "down"
+        self._squat_state = "up"  # "up" | "down"
         self._pushup_state = "up"
 
-        self.sq_down  = cfg["squat_down_angle"]
-        self.sq_up    = cfg["squat_up_angle"]
-        self.pu_down  = cfg["pushup_down_angle"]
-        self.pu_up    = cfg["pushup_up_angle"]
+        self.sq_down = cfg["squat_down_angle"]
+        self.sq_up = cfg["squat_up_angle"]
+        self.pu_down = cfg["pushup_down_angle"]
+        self.pu_up = cfg["pushup_up_angle"]
 
     def update(self, landmarks) -> dict:
         result = {
@@ -189,7 +204,9 @@ class ExerciseCounter:
                 result["squat_count"] = self.squat_count
 
         # ── 俯卧撑：肩-肘-腕 ─────────────────────────────────
-        if both_visible(landmarks, KP["left_shoulder"], KP["left_elbow"], KP["left_wrist"]):
+        if both_visible(
+            landmarks, KP["left_shoulder"], KP["left_elbow"], KP["left_wrist"]
+        ):
             pu_angle = angle(
                 lm_xy(landmarks, KP["left_shoulder"]),
                 lm_xy(landmarks, KP["left_elbow"]),
@@ -211,6 +228,7 @@ class ExerciseCounter:
 #  检测模块 3：久坐提醒
 # ══════════════════════════════════════════════════════════════
 
+
 class SittingTimer:
     """
     逻辑：
@@ -218,12 +236,13 @@ class SittingTimer:
       - 连续坐满 N 分钟 → 触发提醒
       - 检测到站立（膝关节伸直）持续 10 秒 → 重置计时器
     """
+
     def __init__(self, alert_minutes: float, stand_seconds: float):
         self.alert_seconds = alert_minutes * 60
         self.stand_seconds = stand_seconds
-        self._sit_start:   float | None = None
+        self._sit_start: float | None = None
         self._stand_start: float | None = None
-        self._alerted = False   # 已提醒，避免重复报警
+        self._alerted = False  # 已提醒，避免重复报警
 
     def update(self, landmarks) -> dict:
         result = {
@@ -234,22 +253,36 @@ class SittingTimer:
 
         # 用髋-膝-踝角度判断坐/站
         # 坐姿：膝关节约 80°~110°；站立：膝关节 > 160°
-        if not both_visible(landmarks, KP["left_hip"], KP["left_knee"], KP["left_ankle"]):
+        if not both_visible(
+            landmarks, KP["left_hip"], KP["left_knee"], KP["left_ankle"]
+        ):
             return result
 
-        knee_ang = angle(
-            lm_xy(landmarks, KP["left_hip"]),
-            lm_xy(landmarks, KP["left_knee"]),
-            lm_xy(landmarks, KP["left_ankle"]),
-        )
+        # knee_ang = angle(
+        #     lm_xy(landmarks, KP["left_hip"]),
+        #     lm_xy(landmarks, KP["left_knee"]),
+        #     lm_xy(landmarks, KP["left_ankle"]),
+        # )
+        # is_sitting = knee_ang < 130   # 小于 130° 视为坐姿
 
-        is_sitting = knee_ang < 130   # 小于 130° 视为坐姿
+        hip_y = landmarks[KP["left_hip"]].y
+        shoulder_y = landmarks[KP["left_shoulder"]].y
+        torso_span = hip_y - shoulder_y  # 坐着≈0.215，站立≈0.287
+
+        # 髋肩垂直距离（归一化）
+        # 站立时两者距离大；坐着时躯干压缩，距离相对小
+        # 更直接的：髋关节Y绝对位置——坐着时髋在画面中间偏上
+        # is_sitting = hip_y < 0.75  # 髋关节在画面上75%以上位置 → 坐着
+
+        # 坐着时肩髋距离更小，这个规律更稳定。把阈值设在两者中间 0.25：
+        is_sitting = torso_span < 0.25  # 阈值取两者中间
+
         result["is_sitting"] = is_sitting
 
         now = time.time()
 
         if is_sitting:
-            self._stand_start = None   # 重置站立计时
+            self._stand_start = None  # 重置站立计时
             if self._sit_start is None:
                 self._sit_start = now
             elapsed = now - self._sit_start
@@ -273,21 +306,22 @@ class SittingTimer:
 #  显示层：在帧上叠加信息
 # ══════════════════════════════════════════════════════════════
 
+
 def draw_overlay(frame, posture, exercise, sitting, fps: float):
     h, w = frame.shape[:2]
 
     def put(text, y, color=(255, 255, 255)):
-        cv2.putText(frame, text, (10, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 3)   # 黑色描边
-        cv2.putText(frame, text, (10, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
+        cv2.putText(
+            frame, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 3
+        )  # 黑色描边
+        cv2.putText(frame, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
 
     # FPS
     put(f"FPS: {fps:.1f}", 30)
 
     # ── 坐姿 ──────────────────────────────────────────────────
     if posture["torso_angle"] is not None:
-        status  = posture["status"]
+        status = posture["status"]
         ang_str = f"{posture['torso_angle']:.1f}"
         if posture["alert"]:
             put(f"[!] POSTURE BAD  {ang_str}deg", 70, (0, 0, 255))
@@ -317,6 +351,7 @@ def draw_overlay(frame, posture, exercise, sitting, fps: float):
 # ══════════════════════════════════════════════════════════════
 #  TCP 接收（来自 Pi 的自定义帧协议）
 # ══════════════════════════════════════════════════════════════
+
 
 def receive_frames(host: str, port: int):
     """Generator：持续 yield BGR frames"""
@@ -379,19 +414,24 @@ def open_local_camera(source: int):
 #  主循环
 # ══════════════════════════════════════════════════════════════
 
+
 def main(args):
     cfg = CONFIG.copy()
     cfg["port"] = args.port
 
     # 初始化检测模块
-    posture_det  = PostureDetector(cfg["posture_torso_threshold"], cfg["posture_alert_seconds"])
+    posture_det = PostureDetector(
+        cfg["posture_torso_threshold"], cfg["posture_alert_seconds"]
+    )
     exercise_ctr = ExerciseCounter(cfg)
-    sitting_tmr  = SittingTimer(cfg["sitting_alert_minutes"], cfg["sitting_stand_seconds"])
+    sitting_tmr = SittingTimer(
+        cfg["sitting_alert_minutes"], cfg["sitting_stand_seconds"]
+    )
 
     # 初始化 MediaPipe
-    mp_pose    = mp.solutions.pose
+    mp_pose = mp.solutions.pose
     mp_drawing = mp.solutions.drawing_utils
-    mp_styles  = mp.solutions.drawing_styles
+    mp_styles = mp.solutions.drawing_styles
 
     # FPS
     fps_counter, fps_start, current_fps = 0, time.time(), 0.0
@@ -408,9 +448,8 @@ def main(args):
     with mp_pose.Pose(
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5,
-        model_complexity=1,      # 0=快, 1=均衡, 2=最准
+        model_complexity=1,  # 0=快, 1=均衡, 2=最准
     ) as pose:
-
         for frame in frame_gen:
             # ── MediaPipe 推理 ───────────────────────────────
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -427,12 +466,35 @@ def main(args):
                     landmark_drawing_spec=mp_styles.get_default_pose_landmarks_style(),
                 )
 
+            # 在主循环里临时加一行调试输出，观察关键点数据（每秒打印一次）
+            if results.pose_landmarks:
+                lms = results.pose_landmarks.landmark
+                if int(time.time() * 2) % 2 == 0:  # 每秒打一次
+                    print(f"髋Y: {lms[23].y:.3f}  肩Y: {lms[11].y:.3f}")
+
             # ── 检测模块更新 ─────────────────────────────────
             lms = results.pose_landmarks.landmark if results.pose_landmarks else None
 
-            posture  = posture_det.update(lms)  if lms else {"status": "unknown", "torso_angle": None, "alert": False}
-            exercise = exercise_ctr.update(lms) if lms else {"squat_count": exercise_ctr.squat_count, "pushup_count": exercise_ctr.pushup_count, "squat_angle": None, "pushup_angle": None}
-            sitting  = sitting_tmr.update(lms)  if lms else {"sitting_minutes": 0.0, "is_sitting": False, "alert": False}
+            posture = (
+                posture_det.update(lms)
+                if lms
+                else {"status": "unknown", "torso_angle": None, "alert": False}
+            )
+            exercise = (
+                exercise_ctr.update(lms)
+                if lms
+                else {
+                    "squat_count": exercise_ctr.squat_count,
+                    "pushup_count": exercise_ctr.pushup_count,
+                    "squat_angle": None,
+                    "pushup_angle": None,
+                }
+            )
+            sitting = (
+                sitting_tmr.update(lms)
+                if lms
+                else {"sitting_minutes": 0.0, "is_sitting": False, "alert": False}
+            )
 
             # ── FPS ──────────────────────────────────────────
             fps_counter += 1
@@ -442,8 +504,14 @@ def main(args):
                 fps_counter, fps_start = 0, time.time()
 
             # ── 命令行输出 ────────────────────────────────────
-            torso_str = f"{posture['torso_angle']:.1f}°" if posture["torso_angle"] else "n/a"
-            sit_str   = f"{sitting['sitting_minutes']:.1f}min" if sitting["is_sitting"] else "standing"
+            torso_str = (
+                f"{posture['torso_angle']:.1f}°" if posture["torso_angle"] else "n/a"
+            )
+            sit_str = (
+                f"{sitting['sitting_minutes']:.1f}min"
+                if sitting["is_sitting"]
+                else "standing"
+            )
             print(
                 f"\r[FPS {current_fps:4.1f}] "
                 f"姿势:{posture['status']:7s}({torso_str})  "
@@ -452,7 +520,8 @@ def main(args):
                 f"久坐:{sit_str}  "
                 + ("[!]驼背" if posture["alert"] else "")
                 + ("[!]站起来!" if sitting["alert"] else ""),
-                end="", flush=True,
+                end="",
+                flush=True,
             )
 
             # ── 画面叠加 ─────────────────────────────────────
@@ -468,8 +537,13 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port",   type=int, default=9999,
-                        help="TCP 监听端口（默认 9999）")
-    parser.add_argument("--source", type=str, default=None,
-                        help="本地摄像头索引（如 0），不填则等待 Pi 连接")
+    parser.add_argument(
+        "--port", type=int, default=9999, help="TCP 监听端口（默认 9999）"
+    )
+    parser.add_argument(
+        "--source",
+        type=str,
+        default=None,
+        help="本地摄像头索引（如 0），不填则等待 Pi 连接",
+    )
     main(parser.parse_args())
