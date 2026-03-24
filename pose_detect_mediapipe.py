@@ -41,8 +41,9 @@ CONFIG = {
     # ── 视频旋转 ──────────────────────────────────────────────
     "video_rotation_angle": 180,  # 视频旋转角度（0/90/180/270 度）
     # ── 坐姿检测 ──────────────────────────────────────────────
-    "posture_torso_threshold": 150,  # 躯干角 < 此值 → 驼背警告（度）
-    "posture_alert_seconds": 3,  # 持续多少秒才触发警告，避免误报
+    "posture_torso_threshold": 155,  # 躯干角 < 此值 → 驼背警告（度）。改为150° 更宽松
+    "posture_head_forward_threshold": 0.05,  # 头部前倾阈值（鼻子相对肩膀的x位移 > 此值 → 头部前倾）
+    "posture_alert_seconds": 10,  # 坐姿不良持续10秒才触发提醒
     # ── 运动计数（enable_exercise=False 时以下参数无效）────────
     "squat_down_angle": 100,  # 髋-膝-踝角度 < 此值 → 蹲下
     "squat_up_angle": 160,  # 髋-膝-踝角度 > 此值 → 站立
@@ -50,7 +51,7 @@ CONFIG = {
     "pushup_up_angle": 160,  # 肩-肘-腕角度 > 此值 → 撑起
     # ── 久坐提醒 ──────────────────────────────────────────────
     "sitting_alert_minutes": 20,  # 连续坐满多少分钟提醒（测试用0.2，正式用45）
-    "sitting_stand_seconds": 10,  # 站立持续多少秒才重置计时器
+    "sitting_stand_seconds": 60,  # 站立持续多少秒才算真正站起（≥60秒才重置计时器，避免误检测）
     "sitting_repeat_alert_minutes": 1.0,  # 如果没站起，每隔多少分钟重复提醒一次
     # ── 语音提醒 ──────────────────────────────────────────────
     "alert_voice": "Meijia",
@@ -135,22 +136,41 @@ def rotate_frame(frame: np.ndarray, angle: int) -> np.ndarray:
 
 
 class PostureDetector:
-    """耳→肩→髋 夹角判断躯干前倾，左右取平均减少遮挡误差。"""
+    """耳→肩→髋 夹角判断躯干前倾，左右取平均减少遮挡误差。
+    同时检测头部前倾（鼻子相对肩膀的水平位移）。"""
 
-    def __init__(self, torso_threshold: float, alert_seconds: float):
+    def __init__(
+        self,
+        torso_threshold: float,
+        alert_seconds: float,
+        head_forward_threshold: float = 0.05,
+        repeat_alert_seconds: float = 5.0,
+    ):
         self.torso_threshold = torso_threshold
         self.alert_seconds = alert_seconds
+        self.head_forward_threshold = head_forward_threshold  # 头部前倾阈值
+        self.repeat_alert_seconds = (
+            repeat_alert_seconds  # 坐姿不良后，每隔多少秒重复提醒一次
+        )
         self._bad_start: float | None = None
+        self._last_alert_time: float | None = None  # 记录上次播放提醒的时间
 
     def update(self, landmarks) -> dict:
-        result = {"status": "unknown", "torso_angle": None, "alert": False}
+        result = {
+            "status": "unknown",
+            "torso_angle": None,
+            "alert": False,
+            "head_forward": None,
+        }
 
         angles = []
+        # 尽可能收集左右两侧的躯干角，只要有一侧可见就继续
         for ear, shoulder, hip in [
             (KP["left_ear"], KP["left_shoulder"], KP["left_hip"]),
             (KP["right_ear"], KP["right_shoulder"], KP["right_hip"]),
         ]:
-            if all_vis(landmarks, ear, shoulder, hip):
+            # 降低阈值到0.3，即使关键点部分遮挡也能检测
+            if all_vis(landmarks, ear, shoulder, hip, threshold=0.3):
                 angles.append(
                     calc_angle(
                         lm_xy(landmarks, ear),
@@ -166,15 +186,47 @@ class PostureDetector:
         torso_angle = float(np.mean(angles))
         result["torso_angle"] = torso_angle
 
-        if torso_angle < self.torso_threshold:
+        # 检测头部前倾：鼻子-肩膀的水平距离
+        head_forward_ratio = 0.0
+        if lm_vis(landmarks, KP["nose"], threshold=0.3) and all_vis(
+            landmarks, KP["left_shoulder"], KP["right_shoulder"], threshold=0.3
+        ):
+            nose_x = landmarks[KP["nose"]].x
+            shoulder_left_x = landmarks[KP["left_shoulder"]].x
+            shoulder_right_x = landmarks[KP["right_shoulder"]].x
+            shoulder_mid_x = (shoulder_left_x + shoulder_right_x) / 2
+
+            # 计算鼻子相对于肩膀中点的水平位移（正数表示头部前倾）
+            head_forward_ratio = nose_x - shoulder_mid_x
+            result["head_forward"] = head_forward_ratio
+
+        now = time.time()
+        # 判断坐姿是否良好：躯干角足够大 AND 头部不过度前倾
+        is_posture_bad = (torso_angle < self.torso_threshold) or (
+            head_forward_ratio > self.head_forward_threshold
+        )
+
+        if is_posture_bad:
             result["status"] = "bad"
             if self._bad_start is None:
-                self._bad_start = time.time()
-            elif time.time() - self._bad_start >= self.alert_seconds:
+                self._bad_start = now
+
+            elapsed = now - self._bad_start
+            # 首次提醒：坐姿不良持续超过 alert_seconds
+            if elapsed >= self.alert_seconds and self._last_alert_time is None:
                 result["alert"] = True
+                self._last_alert_time = now
+            # 重复提醒：每隔 repeat_alert_seconds 提醒一次
+            elif (
+                self._last_alert_time is not None
+                and now - self._last_alert_time >= self.repeat_alert_seconds
+            ):
+                result["alert"] = True
+                self._last_alert_time = now
         else:
             result["status"] = "good"
             self._bad_start = None
+            self._last_alert_time = None  # 坐姿恢复，重置提醒记录
 
         return result
 
@@ -274,27 +326,34 @@ class SittingTimer:
         }
 
         votes = []
+        # debug_data = {}
 
         # 特征1：肩髋 span
-        if all_vis(landmarks, KP["left_hip"], KP["left_shoulder"], threshold=0.5):
+        if all_vis(landmarks, KP["left_hip"], KP["left_shoulder"], threshold=0.3):
             span = landmarks[KP["left_hip"]].y - landmarks[KP["left_shoulder"]].y
-            votes.append(("span", span < self.span_threshold))
+            is_sitting_vote = span < self.span_threshold
+            votes.append(("span", is_sitting_vote))
+            # debug_data["span"] = f"{span:.3f} (阈值:{self.span_threshold})"
 
         # 特征2：髋Y绝对位置
-        if lm_vis(landmarks, KP["left_hip"], threshold=0.5):
+        if lm_vis(landmarks, KP["left_hip"], threshold=0.3):
             hip_y = landmarks[KP["left_hip"]].y
-            votes.append(("hip_y", hip_y > self.hip_y_thresh))
+            is_sitting_vote = hip_y > self.hip_y_thresh
+            votes.append(("hip_y", is_sitting_vote))
+            # debug_data["hip_y"] = f"{hip_y:.3f} (阈值:{self.hip_y_thresh})"
 
         # 特征3：膝关节角度（腿可见时才参与）
         if all_vis(
-            landmarks, KP["left_hip"], KP["left_knee"], KP["left_ankle"], threshold=0.5
+            landmarks, KP["left_hip"], KP["left_knee"], KP["left_ankle"], threshold=0.3
         ):
             knee_ang = calc_angle(
                 lm_xy(landmarks, KP["left_hip"]),
                 lm_xy(landmarks, KP["left_knee"]),
                 lm_xy(landmarks, KP["left_ankle"]),
             )
+            is_sitting_vote = knee_ang < self.knee_threshold
             votes.append(("knee", knee_ang < self.knee_threshold))
+            # debug_data["knee"] = f"{knee_ang:.1f}° (阈值:{self.knee_threshold}°)"
 
         if not votes:
             is_sitting = self._last_is_sitting
@@ -303,6 +362,9 @@ class SittingTimer:
             sitting_votes = sum(1 for _, v in votes if v)
             is_sitting = sitting_votes > len(votes) / 2
             result["votes"] = " ".join(f"{n}:{'S' if v else 'U'}" for n, v in votes)
+
+        # # 调试信息：显示所有特征值
+        # result["debug_info"] = " | ".join(f"{k}={v}" for k, v in debug_data.items())
 
         self._last_is_sitting = is_sitting
         result["is_sitting"] = is_sitting
@@ -456,7 +518,9 @@ def main(args):
     cfg["port"] = args.port
 
     posture_det = PostureDetector(
-        cfg["posture_torso_threshold"], cfg["posture_alert_seconds"]
+        cfg["posture_torso_threshold"],
+        cfg["posture_alert_seconds"],
+        cfg["posture_head_forward_threshold"],
     )
     exercise_ctr = ExerciseCounter(cfg)
     sitting_tmr = SittingTimer(
@@ -479,8 +543,8 @@ def main(args):
     print("[INFO] 按 q 退出")
 
     with mp_pose.Pose(
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
+        min_detection_confidence=0.35,
+        min_tracking_confidence=0.35,
         model_complexity=1,
     ) as pose:
         for frame in frame_gen:
@@ -504,7 +568,12 @@ def main(args):
             posture = (
                 posture_det.update(lms)
                 if (lms and cfg["enable_posture"])
-                else {"status": "unknown", "torso_angle": None, "alert": False}
+                else {
+                    "status": "unknown",
+                    "torso_angle": None,
+                    "alert": False,
+                    "head_forward": None,
+                }
             )
             exercise = (
                 exercise_ctr.update(lms)
@@ -538,6 +607,11 @@ def main(args):
             torso_str = (
                 f"{posture['torso_angle']:.1f}°" if posture["torso_angle"] else "n/a"
             )
+            # head_forward_str = (
+            #     f\"{posture['head_forward']:.3f}\"
+            #     if posture[\"head_forward\"] is not None
+            #     else \"n/a\"
+            # )
             elapsed_sit = (
                 (time.time() - sitting_tmr._sit_start)
                 if sitting_tmr._sit_start
@@ -555,14 +629,27 @@ def main(args):
             if cfg["enable_exercise"]:
                 line += f"深蹲:{exercise_ctr.squat_count:3d}  俯卧撑:{exercise_ctr.pushup_count:3d}  "
             if cfg["enable_sitting"]:
-                line += f"久坐:{sit_str}  [{sitting.get('votes', '')}]  "
+                line += f"久坐:{sit_str}  "
             if posture["alert"]:
                 line += "[!]驼背  "
             if sitting["alert"]:
                 line += "[!]站起来!"
             print(line, end="", flush=True)
 
-            # ── 语音提醒（非阻塞，上一句播完才播下一句）──────
+            # ── 语音提醒（非阻塞，上一句播完才播下一次）──────
+            # 坐姿提醒（驼背超过10秒，之后每5秒重复提醒一次）
+            if posture["alert"]:
+                if _alert_proc is None or _alert_proc.poll() is not None:
+                    _alert_proc = subprocess.Popen(
+                        [
+                            "say",
+                            "-v",
+                            cfg["alert_voice"],
+                            "你的坐姿不对，请挺直腰背",
+                        ]
+                    )
+
+            # 久坐提醒（久坐超过指定时间）
             if sitting["alert"]:
                 if _alert_proc is None or _alert_proc.poll() is not None:
                     _alert_proc = subprocess.Popen(
