@@ -5,7 +5,7 @@ pose_detect_mediapipe.py
 Mac 端接收 Pi 视频流，使用 MediaPipe Pose 实时检测：
   1. 坐姿 / 驼背
   2. 运动计数（深蹲 / 俯卧撑，需全身正面视角，默认关闭）
-  3. 久坐提醒
+  3. 久坐提醒 + 语音播报
 
 依赖安装:
     pip install opencv-python mediapipe numpy
@@ -21,6 +21,7 @@ Mac 端接收 Pi 视频流，使用 MediaPipe Pose 实时检测：
 import argparse
 import socket
 import struct
+import subprocess
 import time
 import cv2
 import mediapipe as mp
@@ -31,47 +32,55 @@ import numpy as np
 # ══════════════════════════════════════════════════════════════
 CONFIG = {
     # ── 功能开关 ──────────────────────────────────────────────
-    "enable_posture":  True,    # 坐姿 / 驼背检测
-    "enable_exercise": False,   # 运动计数（需全身正面视角，桌前请关闭）
-    "enable_sitting":  True,    # 久坐提醒
-
+    "enable_posture": True,  # 坐姿 / 驼背检测
+    "enable_exercise": False,  # 运动计数（需全身正面视角，桌前请关闭）
+    "enable_sitting": True,  # 久坐提醒
     # ── 网络 ──────────────────────────────────────────────────
-    "host": "",                 # 空字符串 = 监听所有网卡
+    "host": "",  # 空字符串 = 监听所有网卡
     "port": 9999,
-
+    # ── 视频旋转 ──────────────────────────────────────────────
+    "video_rotation_angle": 180,  # 视频旋转角度（0/90/180/270 度）
     # ── 坐姿检测 ──────────────────────────────────────────────
     "posture_torso_threshold": 150,  # 躯干角 < 此值 → 驼背警告（度）
-    "posture_alert_seconds":   3,    # 持续多少秒才触发警告，避免误报
-
+    "posture_alert_seconds": 3,  # 持续多少秒才触发警告，避免误报
     # ── 运动计数（enable_exercise=False 时以下参数无效）────────
-    "squat_down_angle":  100,   # 髋-膝-踝角度 < 此值 → 蹲下
-    "squat_up_angle":    160,   # 髋-膝-踝角度 > 此值 → 站立
-    "pushup_down_angle":  90,   # 肩-肘-腕角度 < 此值 → 下压
-    "pushup_up_angle":   160,   # 肩-肘-腕角度 > 此值 → 撑起
-
+    "squat_down_angle": 100,  # 髋-膝-踝角度 < 此值 → 蹲下
+    "squat_up_angle": 160,  # 髋-膝-踝角度 > 此值 → 站立
+    "pushup_down_angle": 90,  # 肩-肘-腕角度 < 此值 → 下压
+    "pushup_up_angle": 160,  # 肩-肘-腕角度 > 此值 → 撑起
     # ── 久坐提醒 ──────────────────────────────────────────────
-    "sitting_alert_minutes": 45,  # 连续坐满多少分钟提醒
-    "sitting_stand_seconds": 10,  # 检测到站立持续多少秒才重置计时器
-
-    # ── 久坐检测阈值（根据你的摄像头位置校准）────────────────
-    # 坐着时：肩髋span ≈ 0.215，髋Y ≈ 0.537
-    # 站立时：肩髋span ≈ 0.287，髋Y ≈ 0.458
-    "sitting_torso_span_threshold": 0.25,  # 肩髋距离 < 此值 → 坐姿票
-    "sitting_hip_y_threshold":      0.48,  # 髋Y > 此值 → 坐姿票
-    "sitting_knee_angle_threshold": 130,   # 膝角 < 此值 → 坐姿票（腿可见时）
+    "sitting_alert_minutes": 20,  # 连续坐满多少分钟提醒（测试用0.2，正式用45）
+    "sitting_stand_seconds": 10,  # 站立持续多少秒才重置计时器
+    "sitting_repeat_alert_minutes": 1.0,  # 如果没站起，每隔多少分钟重复提醒一次
+    # ── 语音提醒 ──────────────────────────────────────────────
+    "alert_voice": "Meijia",
+    "alert_message": "你已经坐了很久了，站起来活动一下吧！",
+    # ── 久坐坐/站判断阈值（根据你的摄像头位置校准）────────────
+    # 实测参考：坐着 span≈0.215 hip_y≈0.537，站立 span≈0.287 hip_y≈0.458
+    "sitting_torso_span_threshold": 0.25,  # 肩髋距离 < 此值 → 投坐姿票
+    "sitting_hip_y_threshold": 0.48,  # 髋Y > 此值 → 投坐姿票
+    "sitting_knee_angle_threshold": 130,  # 膝角 < 此值 → 投坐姿票（腿可见时）
 }
 
 # ── MediaPipe 关键点索引 ──────────────────────────────────────
 KP = {
-    "nose":           0,
-    "left_eye":       1,  "right_eye":      2,
-    "left_ear":       3,  "right_ear":      4,
-    "left_shoulder": 11,  "right_shoulder": 12,
-    "left_elbow":    13,  "right_elbow":    14,
-    "left_wrist":    15,  "right_wrist":    16,
-    "left_hip":      23,  "right_hip":      24,
-    "left_knee":     25,  "right_knee":     26,
-    "left_ankle":    27,  "right_ankle":    28,
+    "nose": 0,
+    "left_eye": 1,
+    "right_eye": 2,
+    "left_ear": 3,
+    "right_ear": 4,
+    "left_shoulder": 11,
+    "right_shoulder": 12,
+    "left_elbow": 13,
+    "right_elbow": 14,
+    "left_wrist": 15,
+    "right_wrist": 16,
+    "left_hip": 23,
+    "right_hip": 24,
+    "left_knee": 25,
+    "right_knee": 26,
+    "left_ankle": 27,
+    "right_ankle": 28,
 }
 
 
@@ -79,35 +88,58 @@ KP = {
 #  工具函数
 # ══════════════════════════════════════════════════════════════
 
+
 def calc_angle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
     """三点角度，b 为顶点，返回 0~180°"""
     ba, bc = a - b, c - b
     cos = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-6)
     return float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))
 
+
 def lm_xy(landmarks, idx: int) -> np.ndarray:
     p = landmarks[idx]
     return np.array([p.x, p.y])
 
+
 def lm_vis(landmarks, idx: int, threshold=0.4) -> bool:
     return landmarks[idx].visibility > threshold
 
+
 def all_vis(landmarks, *indices, threshold=0.4) -> bool:
     return all(lm_vis(landmarks, i, threshold) for i in indices)
+
+
+def rotate_frame(frame: np.ndarray, angle: int) -> np.ndarray:
+    """旋转视频帧（支持 0/90/180/270 度）"""
+    angle = angle % 360
+    if angle == 0:
+        return frame
+    elif angle == 90:
+        return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    elif angle == 180:
+        return cv2.rotate(frame, cv2.ROTATE_180)
+    elif angle == 270:
+        return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    else:
+        # 任意角度：使用仿射变换
+        h, w = frame.shape[:2]
+        center = (w / 2, h / 2)
+        rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+        rotated = cv2.warpAffine(frame, rotation_matrix, (w, h))
+        return rotated
 
 
 # ══════════════════════════════════════════════════════════════
 #  检测模块 1：坐姿 / 驼背
 # ══════════════════════════════════════════════════════════════
 
+
 class PostureDetector:
-    """
-    耳→肩→髋 夹角判断躯干前倾程度。
-    左右两侧分别计算取平均，减少单侧遮挡影响。
-    """
+    """耳→肩→髋 夹角判断躯干前倾，左右取平均减少遮挡误差。"""
+
     def __init__(self, torso_threshold: float, alert_seconds: float):
         self.torso_threshold = torso_threshold
-        self.alert_seconds   = alert_seconds
+        self.alert_seconds = alert_seconds
         self._bad_start: float | None = None
 
     def update(self, landmarks) -> dict:
@@ -115,15 +147,17 @@ class PostureDetector:
 
         angles = []
         for ear, shoulder, hip in [
-            (KP["left_ear"],  KP["left_shoulder"],  KP["left_hip"]),
+            (KP["left_ear"], KP["left_shoulder"], KP["left_hip"]),
             (KP["right_ear"], KP["right_shoulder"], KP["right_hip"]),
         ]:
             if all_vis(landmarks, ear, shoulder, hip):
-                angles.append(calc_angle(
-                    lm_xy(landmarks, ear),
-                    lm_xy(landmarks, shoulder),
-                    lm_xy(landmarks, hip),
-                ))
+                angles.append(
+                    calc_angle(
+                        lm_xy(landmarks, ear),
+                        lm_xy(landmarks, shoulder),
+                        lm_xy(landmarks, hip),
+                    )
+                )
 
         if not angles:
             self._bad_start = None
@@ -149,23 +183,25 @@ class PostureDetector:
 #  检测模块 2：运动计数（深蹲 + 俯卧撑）
 # ══════════════════════════════════════════════════════════════
 
+
 class ExerciseCounter:
     """down → up 状态机计数，enable_exercise=False 时不会被调用。"""
+
     def __init__(self, cfg: dict):
-        self.squat_count   = 0
-        self.pushup_count  = 0
-        self._squat_state  = "up"
+        self.squat_count = 0
+        self.pushup_count = 0
+        self._squat_state = "up"
         self._pushup_state = "up"
-        self.sq_down  = cfg["squat_down_angle"]
-        self.sq_up    = cfg["squat_up_angle"]
-        self.pu_down  = cfg["pushup_down_angle"]
-        self.pu_up    = cfg["pushup_up_angle"]
+        self.sq_down = cfg["squat_down_angle"]
+        self.sq_up = cfg["squat_up_angle"]
+        self.pu_down = cfg["pushup_down_angle"]
+        self.pu_up = cfg["pushup_up_angle"]
 
     def update(self, landmarks) -> dict:
         result = {
-            "squat_count":  self.squat_count,
+            "squat_count": self.squat_count,
             "pushup_count": self.pushup_count,
-            "squat_angle":  None,
+            "squat_angle": None,
             "pushup_angle": None,
         }
 
@@ -206,47 +242,53 @@ class ExerciseCounter:
 #  检测模块 3：久坐提醒（多特征投票）
 # ══════════════════════════════════════════════════════════════
 
+
 class SittingTimer:
     """
-    用三个独立特征投票判断坐/站，多数决定结果。
-    腿被桌子遮挡时特征3自动弃权，由特征1和2决定。
-
-    特征1: 肩髋垂直距离（torso span）
-           坐着时躯干在画面占比小 → span 小
-    特征2: 髋关节绝对Y坐标
-           根据你的摄像头实测值校准
-    特征3: 膝关节角度（仅腿可见时参与投票）
-           腿伸直/被遮挡时自动弃权
+    三特征投票判断坐/站，多数决：
+      特征1: 肩髋垂直距离（span）  — 坐着时小
+      特征2: 髋关节Y绝对坐标       — 坐着时大
+      特征3: 膝关节角度             — 腿被遮挡时自动弃权
     """
+
     def __init__(self, alert_minutes: float, stand_seconds: float, cfg: dict):
-        self.alert_seconds  = alert_minutes * 60
-        self.stand_seconds  = stand_seconds
+        self.alert_seconds = alert_minutes * 60
+        self.stand_seconds = stand_seconds
+        self.repeat_alert_seconds = cfg["sitting_repeat_alert_minutes"] * 60
         self.span_threshold = cfg["sitting_torso_span_threshold"]
-        self.hip_y_thresh   = cfg["sitting_hip_y_threshold"]
+        self.hip_y_thresh = cfg["sitting_hip_y_threshold"]
         self.knee_threshold = cfg["sitting_knee_angle_threshold"]
 
-        self._sit_start:      float | None = None
-        self._stand_start:    float | None = None
+        self._sit_start: float | None = None
+        self._stand_start: float | None = None
         self._last_is_sitting: bool = False
         self._alerted: bool = False
+        self._last_alert_time: float | None = None  # 记录上次语音提醒的时间
 
     def update(self, landmarks) -> dict:
-        result = {"sitting_minutes": 0.0, "is_sitting": False, "alert": False, "votes": ""}
+        result = {
+            "sitting_minutes": 0.0,
+            "is_sitting": False,
+            "alert": False,
+            "votes": "",
+        }
 
         votes = []
 
-        # ── 特征1：肩髋 span ──────────────────────────────────
+        # 特征1：肩髋 span
         if all_vis(landmarks, KP["left_hip"], KP["left_shoulder"], threshold=0.5):
             span = landmarks[KP["left_hip"]].y - landmarks[KP["left_shoulder"]].y
             votes.append(("span", span < self.span_threshold))
 
-        # ── 特征2：髋Y绝对位置 ───────────────────────────────
+        # 特征2：髋Y绝对位置
         if lm_vis(landmarks, KP["left_hip"], threshold=0.5):
             hip_y = landmarks[KP["left_hip"]].y
             votes.append(("hip_y", hip_y > self.hip_y_thresh))
 
-        # ── 特征3：膝关节角度（腿可见时才投票）──────────────
-        if all_vis(landmarks, KP["left_hip"], KP["left_knee"], KP["left_ankle"], threshold=0.5):
+        # 特征3：膝关节角度（腿可见时才参与）
+        if all_vis(
+            landmarks, KP["left_hip"], KP["left_knee"], KP["left_ankle"], threshold=0.5
+        ):
             knee_ang = calc_angle(
                 lm_xy(landmarks, KP["left_hip"]),
                 lm_xy(landmarks, KP["left_knee"]),
@@ -254,18 +296,13 @@ class SittingTimer:
             )
             votes.append(("knee", knee_ang < self.knee_threshold))
 
-        # ── 投票决定 ─────────────────────────────────────────
         if not votes:
-            # 完全看不到人，维持上一个状态
             is_sitting = self._last_is_sitting
             result["votes"] = "no_data"
         else:
             sitting_votes = sum(1 for _, v in votes if v)
             is_sitting = sitting_votes > len(votes) / 2
-            # 调试用：显示每个特征的投票结果
-            result["votes"] = " ".join(
-                f"{name}:{'S' if v else 'U'}" for name, v in votes
-            )
+            result["votes"] = " ".join(f"{n}:{'S' if v else 'U'}" for n, v in votes)
 
         self._last_is_sitting = is_sitting
         result["is_sitting"] = is_sitting
@@ -277,16 +314,24 @@ class SittingTimer:
                 self._sit_start = now
             elapsed = now - self._sit_start
             result["sitting_minutes"] = elapsed / 60
+
+            # 首次提醒（超过初始警告时间）
             if elapsed >= self.alert_seconds and not self._alerted:
                 result["alert"] = True
                 self._alerted = True
+                self._last_alert_time = now
+            # 重复提醒（每隔 repeat_alert_seconds 提醒一次）
+            elif self._alerted and self._last_alert_time is not None:
+                if now - self._last_alert_time >= self.repeat_alert_seconds:
+                    result["alert"] = True
+                    self._last_alert_time = now
         else:
-            # 需要持续站立 N 秒才重置，防止起身拿东西就重置
             if self._stand_start is None:
                 self._stand_start = now
             elif now - self._stand_start >= self.stand_seconds:
-                self._sit_start   = None
-                self._alerted     = False
+                self._sit_start = None
+                self._alerted = False
+                self._last_alert_time = None
                 self._stand_start = None
 
         return result
@@ -295,6 +340,7 @@ class SittingTimer:
 # ══════════════════════════════════════════════════════════════
 #  显示层
 # ══════════════════════════════════════════════════════════════
+
 
 def draw_overlay(frame, posture, exercise, sitting, fps: float, cfg: dict):
     h, w = frame.shape[:2]
@@ -339,43 +385,51 @@ def draw_overlay(frame, posture, exercise, sitting, fps: float, cfg: dict):
 #  TCP 接收
 # ══════════════════════════════════════════════════════════════
 
+
 def receive_frames(host: str, port: int):
-    """Generator：持续 yield BGR frames，来自 pi_stream.py"""
+    """Generator：持续 yield BGR frames，来自 pi_stream.py，支持自动重连"""
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind((host, port))
     server.listen(1)
-    print(f"[INFO] 等待 Pi 连接 ({host or '0.0.0.0'}:{port})...")
-    conn, addr = server.accept()
-    print(f"[INFO] Pi 已连接: {addr}")
 
-    header_size = struct.calcsize("Q")
-    buf = b""
-    try:
-        while True:
-            while len(buf) < header_size:
-                chunk = conn.recv(65536)
-                if not chunk:
-                    return
-                buf += chunk
-            msg_size = struct.unpack("Q", buf[:header_size])[0]
-            buf = buf[header_size:]
+    while True:
+        print(f"[INFO] 等待 Pi 连接 ({host or '0.0.0.0'}:{port})...")
+        conn, addr = server.accept()
+        print(f"[INFO] Pi 已连接: {addr}")
 
-            while len(buf) < msg_size:
-                chunk = conn.recv(65536)
-                if not chunk:
-                    return
-                buf += chunk
-            frame_data = buf[:msg_size]
-            buf = buf[msg_size:]
+        header_size = struct.calcsize("Q")
+        buf = b""
+        try:
+            while True:
+                while len(buf) < header_size:
+                    chunk = conn.recv(65536)
+                    if not chunk:
+                        # 连接断开，break 内层 while，外层 while 会重新等待连接
+                        raise ConnectionResetError("Pi 连接已断开")
+                    buf += chunk
+                msg_size = struct.unpack("Q", buf[:header_size])[0]
+                buf = buf[header_size:]
 
-            np_arr = np.frombuffer(frame_data, dtype=np.uint8)
-            frame  = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-            if frame is not None:
-                yield frame
-    finally:
-        conn.close()
-        server.close()
+                while len(buf) < msg_size:
+                    chunk = conn.recv(65536)
+                    if not chunk:
+                        raise ConnectionResetError("Pi 连接已断开")
+                    buf += chunk
+                frame_data = buf[:msg_size]
+                buf = buf[msg_size:]
+
+                np_arr = np.frombuffer(frame_data, dtype=np.uint8)
+                frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+                if frame is not None:
+                    yield frame
+        except (ConnectionResetError, BrokenPipeError, OSError) as e:
+            print(f"[WARN] {e}，等待 Pi 重新连接...")
+            conn.close()
+        except Exception as e:
+            print(f"[ERROR] 未预期的错误: {e}")
+            conn.close()
+            raise
 
 
 def open_local_camera(source: int):
@@ -396,19 +450,25 @@ def open_local_camera(source: int):
 #  主循环
 # ══════════════════════════════════════════════════════════════
 
+
 def main(args):
     cfg = CONFIG.copy()
     cfg["port"] = args.port
 
-    posture_det  = PostureDetector(cfg["posture_torso_threshold"], cfg["posture_alert_seconds"])
+    posture_det = PostureDetector(
+        cfg["posture_torso_threshold"], cfg["posture_alert_seconds"]
+    )
     exercise_ctr = ExerciseCounter(cfg)
-    sitting_tmr  = SittingTimer(cfg["sitting_alert_minutes"], cfg["sitting_stand_seconds"], cfg)
+    sitting_tmr = SittingTimer(
+        cfg["sitting_alert_minutes"], cfg["sitting_stand_seconds"], cfg
+    )
 
-    mp_pose    = mp.solutions.pose
+    mp_pose = mp.solutions.pose
     mp_drawing = mp.solutions.drawing_utils
-    mp_styles  = mp.solutions.drawing_styles
+    mp_styles = mp.solutions.drawing_styles
 
     fps_counter, fps_start, current_fps = 0, time.time(), 0.0
+    _alert_proc = None  # 记录 say 进程，上一句播完才播下一句
 
     if args.source is not None:
         frame_gen = open_local_camera(int(args.source))
@@ -423,15 +483,14 @@ def main(args):
         min_tracking_confidence=0.5,
         model_complexity=1,
     ) as pose:
-
         for frame in frame_gen:
-            # MediaPipe 推理
+            # ── MediaPipe 推理 ────────────────────────────────
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             rgb.flags.writeable = False
             results = pose.process(rgb)
             rgb.flags.writeable = True
 
-            # 骨骼绘制
+            # ── 骨骼绘制 ──────────────────────────────────────
             if results.pose_landmarks:
                 mp_drawing.draw_landmarks(
                     frame,
@@ -442,34 +501,76 @@ def main(args):
 
             lms = results.pose_landmarks.landmark if results.pose_landmarks else None
 
-            posture  = posture_det.update(lms)  if (lms and cfg["enable_posture"])  else {"status": "unknown", "torso_angle": None, "alert": False}
-            exercise = exercise_ctr.update(lms) if (lms and cfg["enable_exercise"]) else {"squat_count": 0, "pushup_count": 0, "squat_angle": None, "pushup_angle": None}
-            sitting  = sitting_tmr.update(lms)  if (lms and cfg["enable_sitting"])  else {"sitting_minutes": 0.0, "is_sitting": False, "alert": False, "votes": ""}
+            posture = (
+                posture_det.update(lms)
+                if (lms and cfg["enable_posture"])
+                else {"status": "unknown", "torso_angle": None, "alert": False}
+            )
+            exercise = (
+                exercise_ctr.update(lms)
+                if (lms and cfg["enable_exercise"])
+                else {
+                    "squat_count": 0,
+                    "pushup_count": 0,
+                    "squat_angle": None,
+                    "pushup_angle": None,
+                }
+            )
+            sitting = (
+                sitting_tmr.update(lms)
+                if (lms and cfg["enable_sitting"])
+                else {
+                    "sitting_minutes": 0.0,
+                    "is_sitting": False,
+                    "alert": False,
+                    "votes": "",
+                }
+            )
 
-            # FPS
+            # ── FPS ───────────────────────────────────────────
             fps_counter += 1
             elapsed = time.time() - fps_start
             if elapsed >= 1.0:
                 current_fps = fps_counter / elapsed
                 fps_counter, fps_start = 0, time.time()
 
-            # 命令行输出
-            torso_str = f"{posture['torso_angle']:.1f}°" if posture["torso_angle"] else "n/a"
-            sit_str   = f"{sitting['sitting_minutes']:.1f}min" if sitting["is_sitting"] else "standing"
+            # ── 命令行输出 ────────────────────────────────────
+            torso_str = (
+                f"{posture['torso_angle']:.1f}°" if posture["torso_angle"] else "n/a"
+            )
+            elapsed_sit = (
+                (time.time() - sitting_tmr._sit_start)
+                if sitting_tmr._sit_start
+                else 0.0
+            )
+            sit_str = (
+                f"{sitting['sitting_minutes']:.1f}min({elapsed_sit:.0f}s)"
+                if sitting["is_sitting"]
+                else "standing"
+            )
+
             line = f"\r[FPS {current_fps:4.1f}] "
             if cfg["enable_posture"]:
                 line += f"姿势:{posture['status']:7s}({torso_str})  "
             if cfg["enable_exercise"]:
                 line += f"深蹲:{exercise_ctr.squat_count:3d}  俯卧撑:{exercise_ctr.pushup_count:3d}  "
             if cfg["enable_sitting"]:
-                line += f"久坐:{sit_str}  [{sitting.get('votes','')}]  "
+                line += f"久坐:{sit_str}  [{sitting.get('votes', '')}]  "
             if posture["alert"]:
                 line += "[!]驼背  "
             if sitting["alert"]:
                 line += "[!]站起来!"
             print(line, end="", flush=True)
 
-            # 画面叠加
+            # ── 语音提醒（非阻塞，上一句播完才播下一句）──────
+            if sitting["alert"]:
+                if _alert_proc is None or _alert_proc.poll() is not None:
+                    _alert_proc = subprocess.Popen(
+                        ["say", "-v", cfg["alert_voice"], cfg["alert_message"]]
+                    )
+            # ── 视频旋转 ──────────────────────────────────────────
+            frame = rotate_frame(frame, cfg["video_rotation_angle"])
+            # ── 画面叠加 ──────────────────────────────────────
             draw_overlay(frame, posture, exercise, sitting, current_fps, cfg)
             cv2.imshow("Health Assistant", frame)
 
@@ -482,8 +583,21 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Health Assistant - MediaPipe Pose")
-    parser.add_argument("--port",   type=int,  default=9999,
-                        help="TCP 监听端口（默认 9999）")
-    parser.add_argument("--source", type=str,  default=None,
-                        help="本地摄像头索引（如 0），不填则等待 Pi 连接")
-    main(parser.parse_args())
+    parser.add_argument(
+        "--port", type=int, default=9999, help="TCP 监听端口（默认 9999）"
+    )
+    parser.add_argument(
+        "--source",
+        type=str,
+        default=None,
+        help="本地摄像头索引（如 0），不填则等待 Pi 连接",
+    )
+    parser.add_argument(
+        "--rotation",
+        type=int,
+        default=180,
+        help="视频旋转角度：0/90/180/270 度（默认 180）",
+    )
+    args = parser.parse_args()
+    CONFIG["video_rotation_angle"] = args.rotation
+    main(args)
