@@ -1,5 +1,6 @@
-import socket, struct, cv2, time
+import socket, struct, cv2, time, numpy as np
 from picamera2 import Picamera2
+from libcamera import controls
 
 MAC_IP = "dahuiMac.local"
 PORT = 9999
@@ -11,6 +12,26 @@ picam2.configure(
     )
 )
 picam2.start()
+
+# ── 对焦配置 ──────────────────────────────────────────
+# 设置连续自动对焦 + 对焦到中距离
+try:
+    # 启用自动对焦（使用 libcamera controls 对象）
+    picam2.set_controls(
+        {
+            controls.AfMode: controls.AfModeEnum.Continuous,  # 连续自动对焦
+            controls.LensPosition: 0.5,  # 对焦到中距离（0.0=无穷远, 1.0=最近）
+        }
+    )
+    print("[INFO] 已启用连续自动对焦（对焦距离: 0.5）")
+except Exception as e:
+    print(f"[WARN] 对焦设置失败: {e}")
+    try:
+        # 如果连续对焦失败，尝试手动固定对焦
+        picam2.set_controls({controls.LensPosition: 0.5})
+        print("[INFO] 已设置固定对焦距离: 0.5")
+    except Exception as e2:
+        print(f"[WARN] 固定对焦也失败: {e2}，继续使用默认对焦")
 
 
 def connect_with_retry(ip, port, retry_interval=3):
