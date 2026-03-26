@@ -19,6 +19,8 @@ Mac 端接收 Pi 视频流，使用 MediaPipe Pose 实时检测：
 """
 
 import argparse
+import datetime
+import random
 import socket
 import struct
 import subprocess
@@ -41,7 +43,7 @@ CONFIG = {
     # ── 视频旋转 ──────────────────────────────────────────────
     "video_rotation_angle": 180,  # 视频旋转角度（0/90/180/270 度）
     # ── 坐姿检测 ──────────────────────────────────────────────
-    "posture_torso_threshold": 155,  # 躯干角 < 此值 → 驼背警告（度）。改为150° 更宽松
+    "posture_torso_threshold": 150,  # 躯干角 < 此值 → 驼背警告（度）。改为150° 更宽松
     "posture_head_forward_threshold": 0.05,  # 头部前倾阈值（鼻子相对肩膀的x位移 > 此值 → 头部前倾）
     "posture_alert_seconds": 10,  # 坐姿不良持续10秒才触发提醒
     # ── 运动计数（enable_exercise=False 时以下参数无效）────────
@@ -56,11 +58,37 @@ CONFIG = {
     # ── 语音提醒 ──────────────────────────────────────────────
     "alert_voice": "Meijia",
     "alert_message": "你已经坐了很久了，站起来活动一下吧！",
+    # ── 人离开画面的消息 ──────────────────────────────────────
+    "leave_messages": [
+        "是的，应该多站起来活动一下。有很多比工作更有意思的事可以做哦。",
+        "去休息一下吧，身体比工作更重要。",
+        "站起来伸伸懒腰，让眼睛放松一下。",
+        "出去走走吧，呼吸一下新鲜空气。",
+        "劳逸结合最重要，别太拼了。",
+        "放松放松，生活不只有工作。",
+        "去喝杯水，活动下筋骨。",
+        "给自己一个休息的机会吧。",
+    ],
+    # ── 人回到画面的消息 ──────────────────────────────────────
+    "welcome_back_messages": [
+        "准备回来学习工作了啊，加油！",
+        "欢迎回来，我们继续加油吧！",
+        "休息好了吗？继续冲吧！",
+        "回来了，让我们继续努力。",
+        "充电完成，准备继续战斗！",
+        "状态调整好了，继续来吧！",
+        "一起加油，你可以的！",
+        "新的开始，让我们再来！",
+        "精神焕发了吧，冲起来！",
+    ],
     # ── 久坐坐/站判断阈值（根据你的摄像头位置校准）────────────
     # 实测参考：坐着 span≈0.215 hip_y≈0.537，站立 span≈0.287 hip_y≈0.458
     "sitting_torso_span_threshold": 0.25,  # 肩髋距离 < 此值 → 投坐姿票
     "sitting_hip_y_threshold": 0.48,  # 髋Y > 此值 → 投坐姿票
     "sitting_knee_angle_threshold": 130,  # 膝角 < 此值 → 投坐姿票（腿可见时）
+    "sitting_torso_lean_threshold": 155,  # 躯干倾角 < 此值 → 明显前倾（弯腰）
+    "sitting_knee_straight_threshold": 150,  # 膝角 > 此值 → 腿伸直（弯腰特征）
+    "sitting_frame_smoothing": 3,  # 连续N帧判断为同一状态才切换（避免抖动）
 }
 
 # ── MediaPipe 关键点索引 ──────────────────────────────────────
@@ -310,50 +338,230 @@ class SittingTimer:
         self.span_threshold = cfg["sitting_torso_span_threshold"]
         self.hip_y_thresh = cfg["sitting_hip_y_threshold"]
         self.knee_threshold = cfg["sitting_knee_angle_threshold"]
+        self.torso_lean_thresh = cfg["sitting_torso_lean_threshold"]
+        self.knee_straight_thresh = cfg["sitting_knee_straight_threshold"]
+        self.frame_smoothing = cfg["sitting_frame_smoothing"]
+        self.stand_clear_seconds = 120  # 站立2分钟后清零当前坐着时间
+        self.leave_messages = cfg.get(
+            "leave_messages", ["休息一下吧。"]
+        )  # 人离开的提醒语
+        self.welcome_back_messages = cfg.get(
+            "welcome_back_messages", ["欢迎回来。"]
+        )  # 人回来的欢迎语
 
         self._sit_start: float | None = None
         self._stand_start: float | None = None
         self._last_is_sitting: bool = False
         self._alerted: bool = False
         self._last_alert_time: float | None = None  # 记录上次语音提醒的时间
+        self._sitting_frame_count = 0  # 连续判定为坐着的帧数
+        self._accumulated_sitting: float = 0.0  # 累计坐着时间（秒）
+        self._last_date: str = self._get_date_str()  # 用于检测午夜重置
+        self._last_current_sitting_minutes: float = 0.0  # 站立时保持上一帧的current值
+        self._last_accumulated_sitting_minutes: float = (
+            0.0  # 站立时保持上一帧的accumulated值
+        )
+        self._pause_start: float | None = (
+            None  # 暂停开始时间（检测不到人时），用于补偿暂停期间
+        )
+        self._pause_accumulated: float = 0.0  # 累计暂停时长（秒）
+        self._was_paused: bool = False  # 追踪上一帧是否处于暂停状态
 
     def update(self, landmarks) -> dict:
         result = {
-            "sitting_minutes": 0.0,
+            "current_sitting_minutes": 0.0,
+            "accumulated_sitting_minutes": 0.0,
             "is_sitting": False,
             "alert": False,
             "votes": "",
+            "debug_info": "",
+            "on_leave": False,  # 人离开画面
+            "on_welcome_back": False,  # 人回到画面
         }
 
+        now = time.time()
+
+        # ═══ 检测中断处理：暂停所有计时直到人回到画面 ═══
+        if landmarks is None:
+            # 检测不到人，开始暂停
+            if self._pause_start is None:
+                self._pause_start = now  # 记录暂停开始时间
+                self._was_paused = True
+                result["on_leave"] = True  # 标记人离开事件
+            # 返回上一帧的状态（显示暂停前的最后状态）
+            result["current_sitting_minutes"] = self._last_current_sitting_minutes
+            result["accumulated_sitting_minutes"] = (
+                self._last_accumulated_sitting_minutes
+            )
+            result["debug_info"] = "⏸ 检测中断(暂停计时)"
+            return result
+        else:
+            # 人回到画面，补偿暂停期间
+            if self._pause_start is not None:
+                pause_duration = now - self._pause_start
+                # 所有开始时间向后移动（相当于把暂停时间"删除"掉）
+                if self._sit_start is not None:
+                    self._sit_start += pause_duration
+                if self._stand_start is not None:
+                    self._stand_start += pause_duration
+                if self._last_alert_time is not None:
+                    self._last_alert_time += pause_duration
+                # 清除暂停记录
+                self._pause_start = None
+                # 标记人回来事件（只在暂停后恢复时触发一次）
+                if self._was_paused:
+                    result["on_welcome_back"] = True
+                    self._was_paused = False
+
         votes = []
-        # debug_data = {}
+        debug_data = {}
+
+        # ═══ 躯干角+膝角联合判断：强制站立的条件 ═══
+        # 只有当躯干>160° 且 膝角>140° 时才直接判定为站立
+        angles = []
+        for ear, shoulder, hip in [
+            (KP["left_ear"], KP["left_shoulder"], KP["left_hip"]),
+            (KP["right_ear"], KP["right_shoulder"], KP["right_hip"]),
+        ]:
+            if all_vis(landmarks, ear, shoulder, hip, threshold=0.3):
+                angles.append(
+                    calc_angle(
+                        lm_xy(landmarks, ear),
+                        lm_xy(landmarks, shoulder),
+                        lm_xy(landmarks, hip),
+                    )
+                )
+
+        torso_angle = float(np.mean(angles)) if angles else None
+        if torso_angle is not None:
+            debug_data["torso"] = f"{torso_angle:.1f}°"
+
+        # 膝角检测（先计算，用于联合判断）
+        knee_ang_for_constraint = None
+        if all_vis(
+            landmarks, KP["left_hip"], KP["left_knee"], KP["left_ankle"], threshold=0.3
+        ):
+            knee_ang_for_constraint = calc_angle(
+                lm_xy(landmarks, KP["left_hip"]),
+                lm_xy(landmarks, KP["left_knee"]),
+                lm_xy(landmarks, KP["left_ankle"]),
+            )
+
+        # ═══ 弯腰强制站立：躯干 < 140° → 直接判定为站立 ═══
+        if torso_angle is not None and torso_angle < 140:
+            is_sitting = False
+            result["votes"] = f"BENDING(TORSO<140°)→U"
+            result["debug_info"] = " | ".join(f"{k}={v}" for k, v in debug_data.items())
+            self._last_is_sitting = is_sitting
+            result["is_sitting"] = is_sitting
+
+            # ── 午夜重置检测 ──────────────────────────────
+            current_date = self._get_date_str(now)
+            if current_date != self._last_date:
+                self._accumulated_sitting = 0.0
+                self._last_date = current_date
+
+            # 站立状态：保持上一帧的current和accumulated
+            if self._stand_start is None:
+                self._stand_start = now
+
+            result["current_sitting_minutes"] = self._last_current_sitting_minutes
+            result["accumulated_sitting_minutes"] = (
+                self._last_accumulated_sitting_minutes
+            )
+            return result
+
+        # ═══ 中间姿态（140-160°）：膝角伸直 → 判定为站立 ═══
+        if (
+            torso_angle is not None
+            and 140 <= torso_angle <= 160
+            and knee_ang_for_constraint is not None
+            and knee_ang_for_constraint > 140
+        ):
+            is_sitting = False
+            result["votes"] = (
+                f"MID-STAND(140°<TORSO<160°) ∩ KNEE({knee_ang_for_constraint:.0f}°)>140→U"
+            )
+            result["debug_info"] = " | ".join(f"{k}={v}" for k, v in debug_data.items())
+            self._last_is_sitting = is_sitting
+            result["is_sitting"] = is_sitting
+
+            # ── 午夜重置检测 ──────────────────────────────
+            current_date = self._get_date_str(now)
+            if current_date != self._last_date:
+                self._accumulated_sitting = 0.0
+                self._last_date = current_date
+
+            # 站立状态：保持上一帧的current和accumulated
+            if self._stand_start is None:
+                self._stand_start = now
+
+            result["current_sitting_minutes"] = self._last_current_sitting_minutes
+            result["accumulated_sitting_minutes"] = (
+                self._last_accumulated_sitting_minutes
+            )
+            return result
+
+        # 强制站立条件：躯干>160° AND 膝角>140°
+        if (
+            torso_angle is not None
+            and torso_angle > 160
+            and knee_ang_for_constraint is not None
+            and knee_ang_for_constraint > 140
+        ):
+            is_sitting = False
+            result["votes"] = (
+                f"TORSO({torso_angle:.0f}°)>160 ∩ KNEE({knee_ang_for_constraint:.0f}°)>140→U"
+            )
+            result["debug_info"] = " | ".join(f"{k}={v}" for k, v in debug_data.items())
+            self._last_is_sitting = is_sitting
+            result["is_sitting"] = is_sitting
+
+            # ── 午夜重置检测 ──────────────────────────────
+            current_date = self._get_date_str(now)
+            if current_date != self._last_date:
+                self._accumulated_sitting = 0.0
+                self._last_date = current_date
+
+            # 直立状态：保持上一帧的current和accumulated
+            if self._stand_start is None:
+                self._stand_start = now
+
+            result["current_sitting_minutes"] = self._last_current_sitting_minutes
+            result["accumulated_sitting_minutes"] = (
+                self._last_accumulated_sitting_minutes
+            )
+            return result
 
         # 特征1：肩髋 span
         if all_vis(landmarks, KP["left_hip"], KP["left_shoulder"], threshold=0.3):
             span = landmarks[KP["left_hip"]].y - landmarks[KP["left_shoulder"]].y
             is_sitting_vote = span < self.span_threshold
             votes.append(("span", is_sitting_vote))
-            # debug_data["span"] = f"{span:.3f} (阈值:{self.span_threshold})"
+            debug_data["span"] = f"{span:.3f} (阈值:{self.span_threshold})"
 
         # 特征2：髋Y绝对位置
         if lm_vis(landmarks, KP["left_hip"], threshold=0.3):
             hip_y = landmarks[KP["left_hip"]].y
             is_sitting_vote = hip_y > self.hip_y_thresh
             votes.append(("hip_y", is_sitting_vote))
-            # debug_data["hip_y"] = f"{hip_y:.3f} (阈值:{self.hip_y_thresh})"
+            debug_data["hip_y"] = f"{hip_y:.3f} (阈值:{self.hip_y_thresh})"
 
         # 特征3：膝关节角度（腿可见时才参与）
         if all_vis(
             landmarks, KP["left_hip"], KP["left_knee"], KP["left_ankle"], threshold=0.3
         ):
-            knee_ang = calc_angle(
-                lm_xy(landmarks, KP["left_hip"]),
-                lm_xy(landmarks, KP["left_knee"]),
-                lm_xy(landmarks, KP["left_ankle"]),
-            )
+            # 如果已经计算过膝角（用于强制站立判断），直接使用该值
+            if knee_ang_for_constraint is None:
+                knee_ang_for_constraint = calc_angle(
+                    lm_xy(landmarks, KP["left_hip"]),
+                    lm_xy(landmarks, KP["left_knee"]),
+                    lm_xy(landmarks, KP["left_ankle"]),
+                )
+            knee_ang = knee_ang_for_constraint
             is_sitting_vote = knee_ang < self.knee_threshold
-            votes.append(("knee", knee_ang < self.knee_threshold))
-            # debug_data["knee"] = f"{knee_ang:.1f}° (阈值:{self.knee_threshold}°)"
+            votes.append(("knee", is_sitting_vote))
+            debug_data["knee"] = f"{knee_ang:.1f}° (阈值:{self.knee_threshold}°)"
 
         if not votes:
             is_sitting = self._last_is_sitting
@@ -368,35 +576,72 @@ class SittingTimer:
 
         self._last_is_sitting = is_sitting
         result["is_sitting"] = is_sitting
+        result["debug_info"] = " | ".join(f"{k}={v}" for k, v in debug_data.items())
 
-        now = time.time()
+        # ── 午夜重置检测 ──────────────────────────────────────────────
+        current_date = self._get_date_str(now)
+        if current_date != self._last_date:
+            # 跨过午夜，重置累计时间
+            self._accumulated_sitting = 0.0
+            self._last_date = current_date
         if is_sitting:
+            # ── 坐着状态 ──────────────────────────────────────────────
             self._stand_start = None
             if self._sit_start is None:
                 self._sit_start = now
-            elapsed = now - self._sit_start
-            result["sitting_minutes"] = elapsed / 60
 
-            # 首次提醒（超过初始警告时间）
-            if elapsed >= self.alert_seconds and not self._alerted:
+            current_elapsed = now - self._sit_start
+            current_minutes = current_elapsed / 60
+            accumulated_minutes = (self._accumulated_sitting + current_elapsed) / 60
+
+            result["current_sitting_minutes"] = current_minutes
+            result["accumulated_sitting_minutes"] = accumulated_minutes
+
+            # 保存这一帧的值，站立时会用到
+            self._last_current_sitting_minutes = current_minutes
+            self._last_accumulated_sitting_minutes = accumulated_minutes
+
+            # 提醒逻辑改为基于累计时间
+            total_time = self._accumulated_sitting + current_elapsed
+            if total_time >= self.alert_seconds and not self._alerted:
                 result["alert"] = True
                 self._alerted = True
                 self._last_alert_time = now
-            # 重复提醒（每隔 repeat_alert_seconds 提醒一次）
             elif self._alerted and self._last_alert_time is not None:
                 if now - self._last_alert_time >= self.repeat_alert_seconds:
                     result["alert"] = True
                     self._last_alert_time = now
         else:
+            # ── 站立状态 ──────────────────────────────────────────────
             if self._stand_start is None:
                 self._stand_start = now
-            elif now - self._stand_start >= self.stand_seconds:
+
+            stand_elapsed = now - self._stand_start
+
+            if stand_elapsed < self.stand_clear_seconds:
+                # 站立 < 2分钟：保持上一帧的current和accumulated（不变）
+                result["current_sitting_minutes"] = self._last_current_sitting_minutes
+                result["accumulated_sitting_minutes"] = (
+                    self._last_accumulated_sitting_minutes
+                )
+            else:
+                # 站立 >= 2分钟：current清零，accumulated保持
+                result["current_sitting_minutes"] = 0.0
+                result["accumulated_sitting_minutes"] = self._accumulated_sitting / 60
+
+                # 清除坐着记录
                 self._sit_start = None
                 self._alerted = False
                 self._last_alert_time = None
                 self._stand_start = None
 
         return result
+
+    def _get_date_str(self, timestamp: float | None = None) -> str:
+        """获取指定时间戳（或当前时间）的日期字符串（YYYY-MM-DD）"""
+        if timestamp is None:
+            timestamp = time.time()
+        return datetime.datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -422,6 +667,8 @@ def draw_overlay(frame, posture, exercise, sitting, fps: float, cfg: dict):
             put(f"Posture: slouching  {ang}deg", 70, (0, 165, 255))
         else:
             put(f"Posture: good  {ang}deg", 70, (0, 220, 0))
+        # Debug: 显示躯干角
+        put(f"  Debug: Torso={ang}deg", 95, (180, 180, 180))
 
     # 运动计数
     if cfg["enable_exercise"]:
@@ -434,13 +681,33 @@ def draw_overlay(frame, posture, exercise, sitting, fps: float, cfg: dict):
 
     # 久坐
     if cfg["enable_sitting"]:
-        mins = sitting["sitting_minutes"]
+        current_mins = sitting.get("current_sitting_minutes", 0.0)
+        accumulated_mins = sitting.get("accumulated_sitting_minutes", 0.0)
+
         if sitting["alert"]:
-            put(f"[!] {mins:.0f}min - STAND UP!", h - 20, (0, 0, 255))
+            put(
+                f"[!] STAND UP! Now: {current_mins:.1f}min | Total: {accumulated_mins:.1f}min",
+                h - 60,
+                (0, 0, 255),
+            )
         elif sitting["is_sitting"]:
-            put(f"Sitting: {mins:.1f} min", h - 20, (0, 220, 220))
+            put(
+                f"Sitting - Now: {current_mins:.1f}min | Total: {accumulated_mins:.1f}min",
+                h - 60,
+                (0, 220, 220),
+            )
         else:
-            put("Standing", h - 20, (0, 220, 0))
+            put(f"Standing | Total: {accumulated_mins:.1f}min", h - 60, (0, 220, 0))
+
+        # Debug: 显示投票信息
+        votes_str = sitting.get("votes", "")
+        if votes_str:
+            put(f"  Votes: {votes_str}", h - 35, (180, 180, 180))
+
+        # Debug: 显示特征值
+        debug_info = sitting.get("debug_info", "")
+        if debug_info:
+            put(f"  Features: {debug_info}", h - 10, (180, 180, 180))
 
 
 # ══════════════════════════════════════════════════════════════
@@ -589,7 +856,8 @@ def main(args):
                 sitting_tmr.update(lms)
                 if (lms and cfg["enable_sitting"])
                 else {
-                    "sitting_minutes": 0.0,
+                    "current_sitting_minutes": 0.0,
+                    "accumulated_sitting_minutes": 0.0,
                     "is_sitting": False,
                     "alert": False,
                     "votes": "",
@@ -618,9 +886,9 @@ def main(args):
                 else 0.0
             )
             sit_str = (
-                f"{sitting['sitting_minutes']:.1f}min({elapsed_sit:.0f}s)"
+                f"Now:{sitting.get('current_sitting_minutes', 0):.1f}m Acc:{sitting.get('accumulated_sitting_minutes', 0):.1f}m"
                 if sitting["is_sitting"]
-                else "standing"
+                else f"Acc:{sitting.get('accumulated_sitting_minutes', 0):.1f}m"
             )
 
             line = f"\r[FPS {current_fps:4.1f}] "
@@ -634,7 +902,8 @@ def main(args):
                 line += "[!]驼背  "
             if sitting["alert"]:
                 line += "[!]站起来!"
-            print(line, end="", flush=True)
+            # 注释掉console的debug输出，改为显示在视频上
+            # print(line, end="", flush=True)
 
             # ── 语音提醒（非阻塞，上一句播完才播下一次）──────
             # 坐姿提醒（驼背超过10秒，之后每5秒重复提醒一次）
@@ -654,6 +923,22 @@ def main(args):
                 if _alert_proc is None or _alert_proc.poll() is not None:
                     _alert_proc = subprocess.Popen(
                         ["say", "-v", cfg["alert_voice"], cfg["alert_message"]]
+                    )
+
+            # 人离开画面提醒
+            if sitting.get("on_leave", False):
+                if _alert_proc is None or _alert_proc.poll() is not None:
+                    leave_msg = random.choice(cfg["leave_messages"])
+                    _alert_proc = subprocess.Popen(
+                        ["say", "-v", cfg["alert_voice"], leave_msg]
+                    )
+
+            # 人回到画面欢迎
+            if sitting.get("on_welcome_back", False):
+                if _alert_proc is None or _alert_proc.poll() is not None:
+                    welcome_msg = random.choice(cfg["welcome_back_messages"])
+                    _alert_proc = subprocess.Popen(
+                        ["say", "-v", cfg["alert_voice"], welcome_msg]
                     )
             # ── 视频旋转 ──────────────────────────────────────────
             frame = rotate_frame(frame, cfg["video_rotation_angle"])
