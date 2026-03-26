@@ -425,6 +425,20 @@ class PoseStateMachine:
         """从 AWAY 返回：补偿暂停期间的时间偏移"""
         if self._away_start is not None:
             pause_duration = now - self._away_start
+
+            # 离开时间 >= stand_clear_seconds → 视为充分休息，清零当前坐时
+            if pause_duration >= self.stand_clear_seconds:
+                if self._current_session_elapsed > 0:
+                    self._accumulated_sitting += self._current_session_elapsed
+                    self._current_session_elapsed = 0
+                self._sit_start = None
+                self._bad_posture_start = None
+                self._last_posture_alert_time = None
+                self._last_sitting_alert_time = None
+                self._last_current_minutes = 0.0
+                self._away_start = None
+                return
+
             if self._stand_start is not None:
                 self._stand_start += pause_duration
             if self._bad_posture_start is not None:
@@ -434,7 +448,7 @@ class PoseStateMachine:
             if self._last_sitting_alert_time is not None:
                 self._last_sitting_alert_time += pause_duration
             self._away_start = None
-        # 恢复之前保存的坐计时
+        # 恢复之前保存的坐计时（仅短暂离开时）
         if self._current_session_elapsed > 0:
             self._sit_start = now - self._current_session_elapsed
             self._current_session_elapsed = 0
