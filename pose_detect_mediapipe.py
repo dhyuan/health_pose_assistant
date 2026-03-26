@@ -490,8 +490,8 @@ class PoseStateMachine:
         self._last_current_minutes = current_minutes
         self._last_accumulated_minutes = accumulated_minutes
 
-        # 检查是否久坐
-        if total_sitting >= self.sitting_alert_seconds:
+        # 检查是否久坐（以本次连续坐的时长为准，站起来超过 stand_clear_seconds 后从零计算）
+        if current_elapsed >= self.sitting_alert_seconds:
             self._handle_prolonged(now, result)
         elif self._is_posture_bad(torso_angle, head_forward):
             self._handle_bad_posture(now, result)
@@ -786,6 +786,7 @@ def main(args):
 
     fps_counter, fps_start, current_fps = 0, time.time(), 0.0
     _alert_proc = None  # 记录 say 进程，上一句播完才播下一句
+    _last_voice_time: float = 0.0  # 任意两条语音之间的最小冷却时间
 
     if args.source is not None:
         frame_gen = open_local_camera(int(args.source))
@@ -839,9 +840,14 @@ def main(args):
                 current_fps = fps_counter / elapsed
                 fps_counter, fps_start = 0, time.time()
 
-            # ── 语音提醒（非阻塞，上一句播完才播下一句）──────
+            # ── 语音提醒（非阻塞，上一句播完且冷却5秒后才播下一句）──
             voice_event = sm_result.get("voice_event")
-            if voice_event and (_alert_proc is None or _alert_proc.poll() is not None):
+            now_t = time.time()
+            if (
+                voice_event
+                and (_alert_proc is None or _alert_proc.poll() is not None)
+                and (now_t - _last_voice_time >= 5.0)
+            ):
                 voice_msg = None
                 if voice_event == "bad_posture":
                     voice_msg = "你的坐姿不对，请挺直腰背"
@@ -855,6 +861,7 @@ def main(args):
                     _alert_proc = subprocess.Popen(
                         ["say", "-v", cfg["alert_voice"], voice_msg]
                     )
+                    _last_voice_time = now_t
 
             # ── 视频旋转 ──────────────────────────────────────────
             frame = rotate_frame(frame, cfg["video_rotation_angle"])
