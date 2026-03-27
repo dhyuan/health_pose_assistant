@@ -29,6 +29,15 @@ from enum import Enum, auto
 import cv2
 import mediapipe as mp
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+
+# ── 中文字体（用于 PIL 绘制） ──
+try:
+    _FONT_NORMAL = ImageFont.truetype("/System/Library/Fonts/STHeiti Medium.ttc", 20)
+    _FONT_SMALL = ImageFont.truetype("/System/Library/Fonts/STHeiti Medium.ttc", 14)
+except OSError:
+    _FONT_NORMAL = ImageFont.load_default()
+    _FONT_SMALL = ImageFont.load_default()
 
 # ══════════════════════════════════════════════════════════════
 #  配置区（按需修改）
@@ -741,13 +750,23 @@ class PoseStateMachine:
 def draw_overlay(frame, sm_result: dict, exercise: dict, fps: float, cfg: dict):
     h, w = frame.shape[:2]
 
+    # 使用 PIL 绘制（支持中文）
+    pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil_img)
+
     def put(text, y, color=(255, 255, 255)):
-        cv2.putText(frame, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 3)
-        cv2.putText(frame, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
+        rgb = (color[2], color[1], color[0])  # BGR → RGB
+        py = y - 16
+        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1)]:
+            draw.text((10 + dx, py + dy), text, font=_FONT_NORMAL, fill=(0, 0, 0))
+        draw.text((10, py), text, font=_FONT_NORMAL, fill=rgb)
 
     def put_small(text, y, color=(180, 180, 180)):
-        cv2.putText(frame, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 2)
-        cv2.putText(frame, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, color, 1)
+        rgb = (color[2], color[1], color[0])
+        py = y - 11
+        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            draw.text((10 + dx, py + dy), text, font=_FONT_SMALL, fill=(0, 0, 0))
+        draw.text((10, py), text, font=_FONT_SMALL, fill=rgb)
 
     put(f"FPS: {fps:.1f}", 30)
 
@@ -793,9 +812,15 @@ def draw_overlay(frame, sm_result: dict, exercise: dict, fps: float, cfg: dict):
             )
         elif state_name == "DETECT_FAILED":
             put(
-                f"Detect Failed | Total: {accumulated_mins:.1f}min",
+                f"检测中断 | Total: {accumulated_mins:.1f}min",
                 h - 60,
                 (0, 165, 255),
+            )
+        elif state_name == "AWAY":
+            put(
+                f"离开 | Total: {accumulated_mins:.1f}min",
+                h - 60,
+                (180, 180, 180),
             )
         else:
             put(f"Standing | Total: {accumulated_mins:.1f}min", h - 60, (0, 220, 0))
@@ -810,6 +835,9 @@ def draw_overlay(frame, sm_result: dict, exercise: dict, fps: float, cfg: dict):
             put_small(f"  Features: {lines[0]}", h - 30)
             if len(lines) > 1 and lines[1]:
                 put_small(f"  Features: {lines[1]}", h - 10)
+
+    # 写回 frame
+    frame[:] = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -906,8 +934,8 @@ def main(args):
     print("[INFO] 按 q 退出")
 
     with mp_pose.Pose(
-        min_detection_confidence=0.35,
-        min_tracking_confidence=0.35,
+        min_detection_confidence=0.6,
+        min_tracking_confidence=0.4,
         model_complexity=1,
     ) as pose:
         for frame in frame_gen:
@@ -927,6 +955,18 @@ def main(args):
                 )
 
             lms = results.pose_landmarks.landmark if results.pose_landmarks else None
+
+            # ── 过滤低可见度的误检测（物体被误识为人）──
+            if lms is not None:
+                _core = [
+                    KP["left_shoulder"],
+                    KP["right_shoulder"],
+                    KP["left_hip"],
+                    KP["right_hip"],
+                ]
+                avg_vis = sum(lms[i].visibility for i in _core) / len(_core)
+                if avg_vis < 0.5:
+                    lms = None
 
             # ── 状态机更新（始终调用，传 None 表示检测不到人）──
             sm_result = state_machine.update(lms)
