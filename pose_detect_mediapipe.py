@@ -44,7 +44,7 @@ CONFIG = {
     # ── 视频旋转 ──────────────────────────────────────────────
     "video_rotation_angle": 180,  # 视频旋转角度（0/90/180/270 度）
     # ── 坐姿检测 ──────────────────────────────────────────────
-    "posture_torso_threshold": 150,  # 躯干角 < 此值 → 驼背警告（度）。改为150° 更宽松
+    "posture_torso_threshold": 145,  # 躯干角 < 此值 → 驼背警告（度）。
     "posture_head_forward_threshold": 0.05,  # 头部前倾阈值（鼻子相对肩膀的x位移 > 此值 → 头部前倾）
     "posture_alert_seconds": 10,  # 坐姿不良持续10秒才触发提醒
     # ── 运动计数（enable_exercise=False 时以下参数无效）────────
@@ -224,9 +224,10 @@ class ExerciseCounter:
 
 
 class PoseState(Enum):
-    """五状态：离开 / 站立 / 坐姿良好 / 坐姿不良 / 久坐"""
+    """六状态：离开 / 检测失败 / 站立 / 坐姿良好 / 坐姿不良 / 久坐"""
 
     AWAY = auto()
+    DETECT_FAILED = auto()
     STANDING = auto()
     SITTING_GOOD = auto()
     SITTING_BAD = auto()
@@ -239,12 +240,14 @@ class PoseStateMachine:
 
     状态转换:
       AWAY ──(人出现)──→ STANDING / SITTING_*
+      DETECT_FAILED ──(关节点恢复)──→ 恢复之前的检测流程
       STANDING ──(坐下)──→ SITTING_GOOD / SITTING_BAD
       SITTING_GOOD ──(驼背)──→ SITTING_BAD
       SITTING_GOOD ──(久坐)──→ SITTING_PROLONGED
       SITTING_BAD ──(恢复)──→ SITTING_GOOD
       SITTING_BAD ──(久坐)──→ SITTING_PROLONGED
       SITTING_PROLONGED ──(站起)──→ STANDING
+      任何状态 ──(关节点丢失)──→ DETECT_FAILED（暂停计时）
       任何状态 ──(人消失)──→ AWAY
     """
 
@@ -257,6 +260,7 @@ class PoseStateMachine:
         self.sitting_alert_seconds = cfg["sitting_alert_minutes"] * 60
         self.sitting_repeat_seconds = cfg["sitting_repeat_alert_minutes"] * 60
         self.stand_clear_seconds = cfg["sitting_stand_seconds"]
+        self.away_reset_seconds = 10  # 离开超过10秒→视为主动休息，清零当前坐时
         self.away_clear_seconds = 5 * 60  # 离开超过5分钟→清零当前坐时
         self.span_threshold = cfg["sitting_torso_span_threshold"]
         self.hip_y_thresh = cfg["sitting_hip_y_threshold"]
@@ -270,6 +274,7 @@ class PoseStateMachine:
         self._sit_start: float | None = None
         self._stand_start: float | None = None
         self._away_start: float | None = time.time()
+        self._detect_failed_start: float | None = None
         self._accumulated_sitting: float = 0.0
         self._current_session_elapsed: float = 0.0  # 暂停坐计时器时保存的已坐时长
         self._bad_posture_start: float | None = None
@@ -284,6 +289,10 @@ class PoseStateMachine:
         # ── 显示缓存 ──
         self._last_current_minutes: float = 0.0
         self._last_accumulated_minutes: float = 0.0
+
+        # ── 语音互锁（leave / welcome_back 各只播一次）──
+        self._leave_voice_played: bool = False
+        self._welcome_voice_played: bool = False
 
         # ── 午夜重置 ──
         self._last_date: str = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -401,7 +410,11 @@ class PoseStateMachine:
             votes.append(("knee", knee_ang < self.knee_threshold))
             debug_data["knee"] = f"{knee_ang:.1f}°(阈值:{self.knee_threshold}°)"
 
-        ds = " | ".join(f"{k}={v}" for k, v in debug_data.items())
+        line1_keys = ("torso", "span")
+        line2_keys = ("hip_y", "knee")
+        ds1 = " | ".join(f"{k}={v}" for k, v in debug_data.items() if k in line1_keys)
+        ds2 = " | ".join(f"{k}={v}" for k, v in debug_data.items() if k in line2_keys)
+        ds = ds1 + "\n" + ds2 if ds2 else ds1
 
         if not votes:
             return self._last_raw_sitting, "no_data", ds, torso_angle
@@ -426,12 +439,13 @@ class PoseStateMachine:
         if self._away_start is not None:
             pause_duration = now - self._away_start
 
-            # 离开时间 >= stand_clear_seconds → 视为充分休息，清零当前坐时
-            if pause_duration >= self.stand_clear_seconds:
+            # 离开时间 >= away_reset_seconds → 视为主动休息，清零当前坐时
+            if pause_duration >= self.away_reset_seconds:
                 if self._current_session_elapsed > 0:
                     self._accumulated_sitting += self._current_session_elapsed
                     self._current_session_elapsed = 0
                 self._sit_start = None
+                self._stand_start = None
                 self._bad_posture_start = None
                 self._last_posture_alert_time = None
                 self._last_sitting_alert_time = None
@@ -449,6 +463,57 @@ class PoseStateMachine:
                 self._last_sitting_alert_time += pause_duration
             self._away_start = None
         # 恢复之前保存的坐计时（仅短暂离开时）
+        if self._current_session_elapsed > 0:
+            self._sit_start = now - self._current_session_elapsed
+            self._current_session_elapsed = 0
+
+    def _can_detect(self, landmarks) -> bool:
+        """检查最少需要的关节点是否可见（至少一侧肩膀 + 一侧髋部）"""
+        has_shoulder = lm_vis(landmarks, KP["left_shoulder"], threshold=0.3) or lm_vis(
+            landmarks, KP["right_shoulder"], threshold=0.3
+        )
+        has_hip = lm_vis(landmarks, KP["left_hip"], threshold=0.3) or lm_vis(
+            landmarks, KP["right_hip"], threshold=0.3
+        )
+        return has_shoulder and has_hip
+
+    def _enter_detect_failed(self, now: float):
+        """进入 DETECT_FAILED 状态：暂停所有计时器"""
+        if self._sit_start is not None:
+            self._current_session_elapsed = now - self._sit_start
+            self._sit_start = None
+        self.state = PoseState.DETECT_FAILED
+        self._detect_failed_start = now
+
+    def _return_from_detect_failed(self, now: float):
+        """从 DETECT_FAILED 返回：补偿暂停期间的时间偏移"""
+        if self._detect_failed_start is not None:
+            pause_duration = now - self._detect_failed_start
+
+            # 检测失败时间 >= away_reset_seconds → 视为离开，清零当前坐时
+            if pause_duration >= self.away_reset_seconds:
+                if self._current_session_elapsed > 0:
+                    self._accumulated_sitting += self._current_session_elapsed
+                    self._current_session_elapsed = 0
+                self._sit_start = None
+                self._stand_start = None
+                self._bad_posture_start = None
+                self._last_posture_alert_time = None
+                self._last_sitting_alert_time = None
+                self._last_current_minutes = 0.0
+                self._detect_failed_start = None
+                return
+
+            if self._stand_start is not None:
+                self._stand_start += pause_duration
+            if self._bad_posture_start is not None:
+                self._bad_posture_start += pause_duration
+            if self._last_posture_alert_time is not None:
+                self._last_posture_alert_time += pause_duration
+            if self._last_sitting_alert_time is not None:
+                self._last_sitting_alert_time += pause_duration
+            self._detect_failed_start = None
+        # 恢复之前保存的坐计时（仅短暂检测失败时）
         if self._current_session_elapsed > 0:
             self._sit_start = now - self._current_session_elapsed
             self._current_session_elapsed = 0
@@ -582,7 +647,8 @@ class PoseStateMachine:
         if landmarks is None:
             if self.state != PoseState.AWAY:
                 self._enter_away(now)
-                result["voice_event"] = "leave"
+                if not self._leave_voice_played:
+                    result["voice_event"] = "leave"
             # 离开超过 5 分钟 → 清零当前坐时
             if self._away_start and (now - self._away_start) > self.away_clear_seconds:
                 if self._current_session_elapsed > 0:
@@ -602,7 +668,23 @@ class PoseStateMachine:
         # ═══ 从 AWAY 返回 ═══
         if self.state == PoseState.AWAY:
             self._return_from_away(now)
-            result["voice_event"] = "welcome_back"
+            if not self._welcome_voice_played:
+                result["voice_event"] = "welcome_back"
+
+        # ═══ DETECT_FAILED：关键关节点不可见 ═══
+        if not self._can_detect(landmarks):
+            if self.state != PoseState.DETECT_FAILED:
+                self._enter_detect_failed(now)
+            result["state"] = self.state
+            result["state_name"] = self.state.name
+            result["current_sitting_minutes"] = self._last_current_minutes
+            result["accumulated_sitting_minutes"] = self._last_accumulated_minutes
+            result["debug_info"] = "⚠ 关节点不可见(暂停计时)"
+            return result
+
+        # ═══ 从 DETECT_FAILED 返回 ═══
+        if self.state == PoseState.DETECT_FAILED:
+            self._return_from_detect_failed(now)
 
         # ═══ 坐/站检测 ═══
         is_sitting_raw, votes_str, debug_str, torso_angle = self._detect_sitting_raw(
@@ -636,7 +718,7 @@ class PoseStateMachine:
             want_sit = self._sit_frame_count >= self.frame_smoothing
             want_stand = not want_sit
         else:
-            # 从 AWAY 进入，直接取原始结果
+            # 从 AWAY / DETECT_FAILED 进入，直接取原始结果
             want_sit = is_sitting_raw
             want_stand = not want_sit
 
@@ -663,6 +745,10 @@ def draw_overlay(frame, sm_result: dict, exercise: dict, fps: float, cfg: dict):
         cv2.putText(frame, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 3)
         cv2.putText(frame, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
 
+    def put_small(text, y, color=(180, 180, 180)):
+        cv2.putText(frame, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 2)
+        cv2.putText(frame, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, color, 1)
+
     put(f"FPS: {fps:.1f}", 30)
 
     state_name = sm_result.get("state_name", "AWAY")
@@ -677,7 +763,7 @@ def draw_overlay(frame, sm_result: dict, exercise: dict, fps: float, cfg: dict):
             put(f"Posture: slouching  {ang}deg", 70, (0, 165, 255))
         else:
             put(f"Posture: good  {ang}deg", 70, (0, 220, 0))
-        put(f"  State: {state_name}  Torso={ang}deg", 95, (180, 180, 180))
+        put_small(f"  State: {state_name}  Torso={ang}deg", 95)
 
     # 运动计数
     if cfg["enable_exercise"]:
@@ -705,16 +791,25 @@ def draw_overlay(frame, sm_result: dict, exercise: dict, fps: float, cfg: dict):
                 h - 60,
                 (0, 220, 220),
             )
+        elif state_name == "DETECT_FAILED":
+            put(
+                f"Detect Failed | Total: {accumulated_mins:.1f}min",
+                h - 60,
+                (0, 165, 255),
+            )
         else:
             put(f"Standing | Total: {accumulated_mins:.1f}min", h - 60, (0, 220, 0))
 
         votes_str = sm_result.get("votes", "")
         if votes_str:
-            put(f"  Votes: {votes_str}", h - 35, (180, 180, 180))
+            put_small(f"  Votes: {votes_str}", h - 50)
 
         debug_info = sm_result.get("debug_info", "")
         if debug_info:
-            put(f"  Features: {debug_info}", h - 10, (180, 180, 180))
+            lines = debug_info.split("\n")
+            put_small(f"  Features: {lines[0]}", h - 30)
+            if len(lines) > 1 and lines[1]:
+                put_small(f"  Features: {lines[1]}", h - 10)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -876,6 +971,12 @@ def main(args):
                         ["say", "-v", cfg["alert_voice"], voice_msg]
                     )
                     _last_voice_time = now_t
+                    if voice_event == "leave":
+                        state_machine._leave_voice_played = True
+                        state_machine._welcome_voice_played = False
+                    elif voice_event == "welcome_back":
+                        state_machine._welcome_voice_played = True
+                        state_machine._leave_voice_played = False
 
             # ── 视频旋转 ──────────────────────────────────────────
             frame = rotate_frame(frame, cfg["video_rotation_angle"])
