@@ -135,7 +135,7 @@ health_pose_assistant_website/
 
 *(depends on Phases 1–4)*
 
-20. VM setup: Python 3.11, Node.js 20, PostgreSQL 15, Nginx, Certbot
+20. VM setup: Python 3.11, Node.js 22, PostgreSQL 15, Nginx, Certbot
 21. PostgreSQL: localhost-only, create DB + user, run Alembic migration
 22. FastAPI: systemd service, uvicorn on `127.0.0.1:8000`
 23. Next.js: `npm run build`, PM2, on `127.0.0.1:3000`
