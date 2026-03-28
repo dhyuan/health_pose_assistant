@@ -5,8 +5,8 @@
 			"name": "pose-video"
 		},
 		{
-			"path": "telbox_website",
-			"name": "telbox_website"
+			"path": "health_pose_assistant_website",
+			"name": "health_pose_assistant_website"
 		}
 	],
 	"settings": {}

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Build a multi-user, multi-device health assistant web platform (`telbox_website`)
+Build a multi-user, multi-device health assistant web platform (`health_pose_assistant_website`)
 on Oracle Cloud Always Free. Stack: **Next.js 15** (frontend) + **FastAPI** (backend)
 + **PostgreSQL**. `pose-video` connects via Device Token to pull config and push events.
 
@@ -11,7 +11,7 @@ on Oracle Cloud Always Free. Stack: **Next.js 15** (frontend) + **FastAPI** (bac
 ## Project Structure
 
 ```
-telbox_website/
+health_pose_assistant_website/
 ├── backend/                    # FastAPI (Python)
 │   ├── app/
 │   │   ├── main.py
@@ -80,7 +80,7 @@ telbox_website/
 
 ### Phase 1 — Database & Backend Skeleton
 
-1. Init `telbox_website/backend/` with `requirements.txt`
+1. Init `health_pose_assistant_website/backend/` with `requirements.txt`
    (fastapi, uvicorn, sqlalchemy, alembic, psycopg2-binary, python-jose, passlib, python-dotenv)
 2. Create SQLAlchemy ORM models for all 7 tables (with JSONB fields)
 3. Configure Alembic, generate initial migration
@@ -93,7 +93,7 @@ telbox_website/
 
 *(depends on Phase 1 step 6)*
 
-8. Init `telbox_website/frontend/` with Tailwind CSS
+8. Init `health_pose_assistant_website/frontend/` with Tailwind CSS
 9. Implement `lib/api.ts` with auto JWT header injection
 10. Login page `app/(auth)/login/` with form validation, store token in httpOnly cookie
 11. `middleware.ts` to protect all non-auth routes
@@ -150,10 +150,10 @@ telbox_website/
 |---|---|
 | `pose-video/pose_detect_mediapipe.py` | Add ConfigClient integration, event reporting, heartbeat |
 | `pose-video/config_client.py` | New — background config sync thread |
-| `telbox_website/backend/app/models/` | 7 ORM table definitions |
-| `telbox_website/backend/app/routers/` | Device + admin route handlers |
-| `telbox_website/frontend/app/settings/` | Config editor (highest priority page) |
-| `telbox_website/frontend/app/stats/` | Stats charts |
+| `health_pose_assistant_website/backend/app/models/` | 7 ORM table definitions |
+| `health_pose_assistant_website/backend/app/routers/` | Device + admin route handlers |
+| `health_pose_assistant_website/frontend/app/settings/` | Config editor (highest priority page) |
+| `health_pose_assistant_website/frontend/app/stats/` | Stats charts |
 
 ---
 
