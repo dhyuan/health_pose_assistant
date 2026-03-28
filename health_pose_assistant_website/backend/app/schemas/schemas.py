@@ -75,6 +75,7 @@ class ConfigUpdate(BaseModel):
 class DeviceConfigResponse(BaseModel):
     version: int
     config_json: dict
+    today_sitting_minutes: int = 0
 
 
 class EventCreate(BaseModel):

@@ -20,16 +20,20 @@ Mac 端接收 Pi 视频流，使用 MediaPipe Pose 实时检测：
 
 import argparse
 import datetime
+import logging
 import random
 import socket
 import struct
 import subprocess
+import threading
 import time
 from enum import Enum, auto
 import cv2
 import mediapipe as mp
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+
+logger = logging.getLogger(__name__)
 
 # ── 中文字体（用于 PIL 绘制） ──
 try:
@@ -910,12 +914,51 @@ def open_local_camera(source: int):
 # ══════════════════════════════════════════════════════════════
 
 
+def _total_sitting_minutes(sm) -> int:
+    """Calculate total sitting minutes from PoseStateMachine internal state."""
+    total = sm._accumulated_sitting
+    if sm._sit_start is not None:
+        total += time.time() - sm._sit_start
+    elif sm._current_session_elapsed > 0:
+        total += sm._current_session_elapsed
+    return int(total / 60)
+
+
 def main(args):
     cfg = CONFIG.copy()
     cfg["port"] = args.port
 
     state_machine = PoseStateMachine(cfg)
     exercise_ctr = ExerciseCounter(cfg)
+
+    # ── 后端集成（仅当 --api-url 和 --device-token 都提供时启用）──
+    event_reporter = None
+    _last_sitting_report: float = time.time()
+
+    if args.api_url and args.device_token:
+        from config_client import ConfigClient, EventReporter
+
+        config_client = ConfigClient(
+            args.api_url,
+            args.device_token,
+            state_machine,
+            exercise_ctr,
+            cfg,
+            interval=args.config_interval,
+        )
+        config_client.start()
+
+        event_reporter = EventReporter(args.api_url, args.device_token)
+
+        # Heartbeat thread (every 30s)
+        def _heartbeat_loop():
+            while True:
+                event_reporter.heartbeat()
+                time.sleep(30)
+
+        threading.Thread(target=_heartbeat_loop, name="heartbeat", daemon=True).start()
+
+        logger.info("已连接后端 %s", args.api_url)
 
     mp_pose = mp.solutions.pose
     mp_drawing = mp.solutions.drawing_utils
@@ -989,6 +1032,16 @@ def main(args):
                 current_fps = fps_counter / elapsed
                 fps_counter, fps_start = 0, time.time()
 
+            # ── 久坐汇报（每 10 分钟上报一次 sitting_summary）──
+            if event_reporter:
+                now_rpt = time.time()
+                if now_rpt - _last_sitting_report >= 600:
+                    sit_mins = _total_sitting_minutes(state_machine)
+                    event_reporter.report_event(
+                        "sitting_summary", {"sitting_minutes": sit_mins}
+                    )
+                    _last_sitting_report = now_rpt
+
             # ── 语音提醒（非阻塞，上一句播完且冷却5秒后才播下一句）──
             voice_event = sm_result.get("voice_event")
             now_t = time.time()
@@ -1011,6 +1064,9 @@ def main(args):
                         ["say", "-v", cfg["alert_voice"], voice_msg]
                     )
                     _last_voice_time = now_t
+                    # 上报事件到后端
+                    if event_reporter:
+                        event_reporter.report_event(voice_event)
                     if voice_event == "leave":
                         state_machine._leave_voice_played = True
                         state_machine._welcome_voice_played = False
@@ -1048,6 +1104,28 @@ if __name__ == "__main__":
         default=180,
         help="视频旋转角度：0/90/180/270 度（默认 180）",
     )
+    parser.add_argument(
+        "--api-url",
+        type=str,
+        default=None,
+        help="后端 API 地址（如 http://localhost:8000），不填则纯本地模式",
+    )
+    parser.add_argument(
+        "--device-token",
+        type=str,
+        default=None,
+        help="设备 Token（从后端管理页获取）",
+    )
+    parser.add_argument(
+        "--config-interval",
+        type=int,
+        default=10,
+        help="配置轮询间隔秒数（默认 10）",
+    )
     args = parser.parse_args()
     CONFIG["video_rotation_angle"] = args.rotation
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    )
     main(args)
