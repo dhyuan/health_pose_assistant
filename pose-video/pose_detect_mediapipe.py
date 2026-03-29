@@ -919,6 +919,7 @@ from socketserver import ThreadingMixIn
 
 class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
+    allow_reuse_address = True
 
 
 class MJPEGStreamHandler(BaseHTTPRequestHandler):
@@ -1168,12 +1169,15 @@ def main(args):
             if mjpeg_server is not None:
                 mjpeg_server.update_frame(frame)
 
-            cv2.imshow("Health Assistant", frame)
+            if not args.headless:
+                cv2.imshow("Health Assistant", frame)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+            else:
+                time.sleep(0.001)  # yield to MJPEG server threads
 
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
-
-    cv2.destroyAllWindows()
+    if not args.headless:
+        cv2.destroyAllWindows()
     print("\n[INFO] 已退出")
 
 
@@ -1217,6 +1221,11 @@ if __name__ == "__main__":
         type=int,
         default=8080,
         help="MJPEG 流服务端口（默认 8080，设为 0 禁用）",
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="无窗口模式（不打开 OpenCV 窗口，仅通过 MJPEG 流输出）",
     )
     args = parser.parse_args()
     CONFIG["video_rotation_angle"] = args.rotation
