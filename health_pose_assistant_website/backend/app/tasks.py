@@ -12,16 +12,23 @@ from app.models import DailyStat, PostureEvent
 logger = logging.getLogger(__name__)
 
 
-def aggregate_daily_stats_for_date(db: Session, target_date: datetime.date):
-    """Aggregate posture_events → daily_stats for *target_date*."""
-    start_dt = datetime.datetime.combine(
-        target_date, datetime.time.min, tzinfo=datetime.timezone.utc
+import zoneinfo
+
+
+def aggregate_daily_stats_for_date(
+    db: Session, target_date: datetime.date, tz: str = "UTC"
+):
+    """Aggregate posture_events → daily_stats for *target_date* in given timezone."""
+    try:
+        tzinfo = zoneinfo.ZoneInfo(tz)
+    except Exception:
+        tzinfo = datetime.timezone.utc
+    local_start = datetime.datetime.combine(
+        target_date, datetime.time.min, tzinfo=tzinfo
     )
-    end_dt = datetime.datetime.combine(
-        target_date + datetime.timedelta(days=1),
-        datetime.time.min,
-        tzinfo=datetime.timezone.utc,
-    )
+    local_end = local_start + datetime.timedelta(days=1)
+    start_dt = local_start.astimezone(datetime.timezone.utc)
+    end_dt = local_end.astimezone(datetime.timezone.utc)
 
     rows = (
         db.query(
@@ -84,15 +91,16 @@ def aggregate_daily_stats_for_date(db: Session, target_date: datetime.date):
     db.commit()
 
 
-def run_aggregation():
+def run_aggregation(tz: str = "Pacific/Auckland"):
     """Aggregate today + yesterday (called periodically by APScheduler)."""
     db = SessionLocal()
     try:
-        today = datetime.datetime.now(datetime.timezone.utc).date()
+        now = datetime.datetime.now(zoneinfo.ZoneInfo(tz))
+        today = now.date()
         yesterday = today - datetime.timedelta(days=1)
-        aggregate_daily_stats_for_date(db, yesterday)
-        aggregate_daily_stats_for_date(db, today)
-        logger.info("Aggregation completed for %s and %s", yesterday, today)
+        aggregate_daily_stats_for_date(db, yesterday, tz)
+        aggregate_daily_stats_for_date(db, today, tz)
+        logger.info(f"Aggregation completed for {yesterday} and {today} in tz {tz}")
     except Exception:
         logger.exception("Aggregation failed")
         db.rollback()

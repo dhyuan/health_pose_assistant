@@ -2,6 +2,7 @@ import datetime
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+import zoneinfo
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
@@ -177,9 +178,11 @@ def get_stats(
     device_id: int | None = Query(None),
     from_date: datetime.date | None = Query(None, alias="from"),
     to_date: datetime.date | None = Query(None, alias="to"),
+    tz: str = Query("UTC"),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    # 仅做透传，实际聚合时区逻辑在聚合任务中实现
     q = db.query(DailyStat)
     if device_id is not None:
         q = q.filter(DailyStat.device_id == device_id)
@@ -197,17 +200,19 @@ def get_stats(
 def get_sitting_sessions(
     date: datetime.date = Query(...),
     device_id: int | None = Query(None),
+    tz: str = Query("UTC"),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    start_dt = datetime.datetime.combine(
-        date, datetime.time.min, tzinfo=datetime.timezone.utc
-    )
-    end_dt = datetime.datetime.combine(
-        date + datetime.timedelta(days=1),
-        datetime.time.min,
-        tzinfo=datetime.timezone.utc,
-    )
+    # 计算本地时区对应的UTC区间
+    try:
+        tzinfo = zoneinfo.ZoneInfo(tz)
+    except Exception:
+        tzinfo = datetime.timezone.utc
+    local_start = datetime.datetime.combine(date, datetime.time.min, tzinfo=tzinfo)
+    local_end = local_start + datetime.timedelta(days=1)
+    start_dt = local_start.astimezone(datetime.timezone.utc)
+    end_dt = local_end.astimezone(datetime.timezone.utc)
 
     q = db.query(PostureEvent).filter(
         PostureEvent.event_type == "sitting_session",
