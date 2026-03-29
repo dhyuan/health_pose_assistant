@@ -294,6 +294,10 @@ class PoseStateMachine:
         self._last_posture_alert_time: float | None = None
         self._last_sitting_alert_time: float | None = None
 
+        # ── 坐立会话追踪 ──
+        self._session_wall_start: datetime.datetime | None = None
+        self._pending_session: dict | None = None
+
         # ── 帧平滑 ──
         self._sit_frame_count: int = 0
         self._stand_frame_count: int = 0
@@ -455,6 +459,7 @@ class PoseStateMachine:
             # 离开时间 >= away_reset_seconds → 视为主动休息，清零当前坐时
             if pause_duration >= self.away_reset_seconds:
                 if self._current_session_elapsed > 0:
+                    self._finalize_session(self._current_session_elapsed)
                     self._accumulated_sitting += self._current_session_elapsed
                     self._current_session_elapsed = 0
                 self._sit_start = None
@@ -506,6 +511,7 @@ class PoseStateMachine:
             # 检测失败时间 >= away_reset_seconds → 视为离开，清零当前坐时
             if pause_duration >= self.away_reset_seconds:
                 if self._current_session_elapsed > 0:
+                    self._finalize_session(self._current_session_elapsed)
                     self._accumulated_sitting += self._current_session_elapsed
                     self._current_session_elapsed = 0
                 self._sit_start = None
@@ -551,6 +557,7 @@ class PoseStateMachine:
         if stand_elapsed >= self.stand_clear_seconds:
             # 站立足够久→清零当前坐时，累计保留
             if self._current_session_elapsed > 0:
+                self._finalize_session(self._current_session_elapsed)
                 self._accumulated_sitting += self._current_session_elapsed
                 self._current_session_elapsed = 0
             self._last_current_minutes = 0.0
@@ -570,6 +577,7 @@ class PoseStateMachine:
                 self._current_session_elapsed = 0
             else:
                 self._sit_start = now
+                self._session_wall_start = datetime.datetime.now(datetime.timezone.utc)
 
         current_elapsed = now - self._sit_start
         total_sitting = self._accumulated_sitting + current_elapsed
@@ -627,6 +635,17 @@ class PoseStateMachine:
         self._bad_posture_start = None
         self._last_posture_alert_time = None
 
+    def _finalize_session(self, session_seconds: float):
+        """记录已结束的坐立会话，供事件上报使用。"""
+        if self._session_wall_start is not None and session_seconds > 0:
+            end_time = datetime.datetime.now(datetime.timezone.utc)
+            self._pending_session = {
+                "start_time": self._session_wall_start.isoformat(),
+                "end_time": end_time.isoformat(),
+                "duration_seconds": round(session_seconds),
+            }
+            self._session_wall_start = None
+
     # ─────────────────────── 主更新入口 ───────────────────────
 
     def update(self, landmarks) -> dict:
@@ -648,11 +667,20 @@ class PoseStateMachine:
             "votes": "",
             "debug_info": "",
             "voice_event": None,  # leave / welcome_back / bad_posture / prolonged_sitting
+            "session_ended": None,  # 坐立会话结束时的信息
         }
 
         # ── 午夜重置 ──
         current_date = datetime.datetime.now().strftime("%Y-%m-%d")
         if current_date != self._last_date:
+            # 跨日时结束当前坐立会话
+            if self._sit_start is not None:
+                self._finalize_session(now - self._sit_start)
+                self._sit_start = now
+                self._session_wall_start = datetime.datetime.now(datetime.timezone.utc)
+            elif self._current_session_elapsed > 0:
+                self._finalize_session(self._current_session_elapsed)
+                self._current_session_elapsed = 0
             self._accumulated_sitting = 0.0
             self._last_date = current_date
 
@@ -665,6 +693,7 @@ class PoseStateMachine:
             # 离开超过 5 分钟 → 清零当前坐时
             if self._away_start and (now - self._away_start) > self.away_clear_seconds:
                 if self._current_session_elapsed > 0:
+                    self._finalize_session(self._current_session_elapsed)
                     self._accumulated_sitting += self._current_session_elapsed
                     self._current_session_elapsed = 0
                 self._sit_start = None
@@ -676,6 +705,9 @@ class PoseStateMachine:
             result["current_sitting_minutes"] = self._last_current_minutes
             result["accumulated_sitting_minutes"] = self._last_accumulated_minutes
             result["debug_info"] = "⏸ 检测中断(暂停计时)"
+            if self._pending_session is not None:
+                result["session_ended"] = self._pending_session
+                self._pending_session = None
             return result
 
         # ═══ 从 AWAY 返回 ═══
@@ -693,6 +725,9 @@ class PoseStateMachine:
             result["current_sitting_minutes"] = self._last_current_minutes
             result["accumulated_sitting_minutes"] = self._last_accumulated_minutes
             result["debug_info"] = "⚠ 关节点不可见(暂停计时)"
+            if self._pending_session is not None:
+                result["session_ended"] = self._pending_session
+                self._pending_session = None
             return result
 
         # ═══ 从 DETECT_FAILED 返回 ═══
@@ -743,6 +778,9 @@ class PoseStateMachine:
 
         result["state"] = self.state
         result["state_name"] = self.state.name
+        if self._pending_session is not None:
+            result["session_ended"] = self._pending_session
+            self._pending_session = None
         return result
 
 
@@ -1127,6 +1165,11 @@ def main(args):
                         "sitting_summary", {"sitting_minutes": sit_mins}
                     )
                     _last_sitting_report = now_rpt
+
+                # 上报坐立会话结束事件
+                session_ended = sm_result.get("session_ended")
+                if session_ended:
+                    event_reporter.report_event("sitting_session", session_ended)
 
             # ── 语音提醒（非阻塞，上一句播完且冷却5秒后才播下一句）──
             voice_event = sm_result.get("voice_event")

@@ -121,3 +121,19 @@ class DashboardOut(BaseModel):
     total_devices: int
     online_devices: int
     today: TodaySummary
+
+
+# ---- Sitting Sessions ----
+
+
+class SittingSessionOut(BaseModel):
+    id: int
+    device_id: int
+    start_time: str
+    end_time: str
+    duration_seconds: int
+
+
+class SittingSessionsResponse(BaseModel):
+    sitting_alert_minutes: int
+    sessions: list[SittingSessionOut]

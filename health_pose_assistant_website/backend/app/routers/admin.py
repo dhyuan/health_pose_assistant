@@ -27,6 +27,8 @@ from app.schemas.schemas import (
     DeviceOut,
     DeviceUpdate,
     DeviceWithToken,
+    SittingSessionOut,
+    SittingSessionsResponse,
     TodaySummary,
 )
 
@@ -186,6 +188,58 @@ def get_stats(
     if to_date is not None:
         q = q.filter(DailyStat.stat_date <= to_date)
     return q.order_by(DailyStat.stat_date.desc()).all()
+
+
+# ---- Sitting Sessions ----
+
+
+@router.get("/sitting-sessions", response_model=SittingSessionsResponse)
+def get_sitting_sessions(
+    date: datetime.date = Query(...),
+    device_id: int | None = Query(None),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    start_dt = datetime.datetime.combine(
+        date, datetime.time.min, tzinfo=datetime.timezone.utc
+    )
+    end_dt = datetime.datetime.combine(
+        date + datetime.timedelta(days=1),
+        datetime.time.min,
+        tzinfo=datetime.timezone.utc,
+    )
+
+    q = db.query(PostureEvent).filter(
+        PostureEvent.event_type == "sitting_session",
+        PostureEvent.created_at >= start_dt,
+        PostureEvent.created_at < end_dt,
+    )
+    if device_id is not None:
+        q = q.filter(PostureEvent.device_id == device_id)
+
+    events = q.order_by(PostureEvent.created_at.asc()).all()
+
+    # Get sitting_alert_minutes from active config
+    profile = db.query(ConfigProfile).filter(ConfigProfile.is_active.is_(True)).first()
+    alert_mins = 20
+    if profile and profile.config_json:
+        alert_mins = profile.config_json.get("sitting_alert_minutes", 20)
+
+    sessions = [
+        SittingSessionOut(
+            id=e.id,
+            device_id=e.device_id,
+            start_time=e.payload.get("start_time", ""),
+            end_time=e.payload.get("end_time", ""),
+            duration_seconds=e.payload.get("duration_seconds", 0),
+        )
+        for e in events
+    ]
+
+    return SittingSessionsResponse(
+        sitting_alert_minutes=alert_mins,
+        sessions=sessions,
+    )
 
 
 # ---- Dashboard ----

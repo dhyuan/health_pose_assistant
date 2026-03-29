@@ -2,7 +2,7 @@
 
 import datetime
 
-from app.models import DailyStat, Device
+from app.models import DailyStat, Device, PostureEvent
 
 
 class TestAdminDevices:
@@ -354,3 +354,116 @@ class TestDeviceStreamUrl:
         )
         assert resp.status_code == 404
         assert "no stream" in resp.json()["detail"].lower()
+
+
+class TestSittingSessions:
+    def test_sitting_sessions_empty(self, client, admin_headers):
+        resp = client.get(
+            "/api/v1/admin/sitting-sessions?date=2026-03-29",
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["sessions"] == []
+        assert data["sitting_alert_minutes"] == 20  # default
+
+    def test_sitting_sessions_with_data(
+        self, client, admin_headers, device_with_token, db
+    ):
+        device, _ = device_with_token
+        target_date = datetime.date(2026, 3, 29)
+        ts = datetime.datetime(2026, 3, 29, 9, 0, 0, tzinfo=datetime.timezone.utc)
+
+        db.add(
+            PostureEvent(
+                device_id=device.id,
+                event_type="sitting_session",
+                payload={
+                    "start_time": "2026-03-29T09:00:00+00:00",
+                    "end_time": "2026-03-29T09:45:00+00:00",
+                    "duration_seconds": 2700,
+                },
+                created_at=ts,
+            )
+        )
+        db.add(
+            PostureEvent(
+                device_id=device.id,
+                event_type="sitting_session",
+                payload={
+                    "start_time": "2026-03-29T14:00:00+00:00",
+                    "end_time": "2026-03-29T14:15:00+00:00",
+                    "duration_seconds": 900,
+                },
+                created_at=datetime.datetime(
+                    2026, 3, 29, 14, 15, 0, tzinfo=datetime.timezone.utc
+                ),
+            )
+        )
+        db.commit()
+
+        resp = client.get(
+            f"/api/v1/admin/sitting-sessions?date=2026-03-29",
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["sessions"]) == 2
+        assert data["sessions"][0]["duration_seconds"] == 2700
+        assert data["sessions"][1]["duration_seconds"] == 900
+
+    def test_sitting_sessions_filter_by_device(
+        self, client, admin_headers, device_with_token, db
+    ):
+        device, _ = device_with_token
+        ts = datetime.datetime(2026, 3, 29, 10, 0, 0, tzinfo=datetime.timezone.utc)
+        db.add(
+            PostureEvent(
+                device_id=device.id,
+                event_type="sitting_session",
+                payload={
+                    "start_time": "2026-03-29T10:00:00+00:00",
+                    "end_time": "2026-03-29T10:30:00+00:00",
+                    "duration_seconds": 1800,
+                },
+                created_at=ts,
+            )
+        )
+        db.commit()
+
+        # Matching device
+        resp = client.get(
+            f"/api/v1/admin/sitting-sessions?date=2026-03-29&device_id={device.id}",
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        assert len(resp.json()["sessions"]) == 1
+
+        # Non-existing device
+        resp = client.get(
+            "/api/v1/admin/sitting-sessions?date=2026-03-29&device_id=9999",
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        assert len(resp.json()["sessions"]) == 0
+
+    def test_sitting_sessions_alert_from_config(
+        self, client, admin_headers, active_config, db
+    ):
+        # Update config to include sitting_alert_minutes
+        active_config.config_json = {"sitting_alert_minutes": 30}
+        db.commit()
+
+        resp = client.get(
+            "/api/v1/admin/sitting-sessions?date=2026-03-29",
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["sitting_alert_minutes"] == 30
+
+    def test_sitting_sessions_date_required(self, client, admin_headers):
+        resp = client.get(
+            "/api/v1/admin/sitting-sessions",
+            headers=admin_headers,
+        )
+        assert resp.status_code == 422
