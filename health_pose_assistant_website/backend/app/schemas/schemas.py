@@ -42,6 +42,7 @@ class DeviceOut(BaseModel):
     name: str
     owner_id: int
     last_seen_at: datetime.datetime | None
+    stream_url: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -81,6 +82,10 @@ class DeviceConfigResponse(BaseModel):
 class EventCreate(BaseModel):
     event_type: str
     payload: dict = {}
+
+
+class HeartbeatRequest(BaseModel):
+    stream_url: str | None = None
 
 
 class HeartbeatResponse(BaseModel):

@@ -97,6 +97,36 @@ class TestHeartbeat:
         db.refresh(device)
         assert device.last_seen_at is not None
 
+    def test_heartbeat_with_stream_url(
+        self, client, device_headers, device_with_token, db
+    ):
+        device, _ = device_with_token
+        assert device.stream_url is None
+
+        resp = client.post(
+            "/api/v1/device/heartbeat",
+            json={"stream_url": "http://mac.local:8080/stream"},
+            headers=device_headers,
+        )
+        assert resp.status_code == 200
+
+        db.refresh(device)
+        assert device.stream_url == "http://mac.local:8080/stream"
+        assert device.last_seen_at is not None
+
+    def test_heartbeat_without_stream_url_keeps_existing(
+        self, client, device_headers, device_with_token, db
+    ):
+        device, _ = device_with_token
+        device.stream_url = "http://existing:8080/stream"
+        db.commit()
+
+        resp = client.post("/api/v1/device/heartbeat", headers=device_headers)
+        assert resp.status_code == 200
+
+        db.refresh(device)
+        assert device.stream_url == "http://existing:8080/stream"
+
     def test_heartbeat_invalid_token(self, client):
         resp = client.post(
             "/api/v1/device/heartbeat",

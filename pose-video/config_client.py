@@ -161,12 +161,13 @@ class ConfigClient:
 class EventReporter:
     """Non-blocking event submission via ThreadPoolExecutor."""
 
-    def __init__(self, api_url, device_token, max_workers=2):
+    def __init__(self, api_url, device_token, max_workers=2, stream_url=None):
         self._api_url = api_url.rstrip("/")
         self._headers = {
             "X-Device-Token": device_token,
             "Content-Type": "application/json",
         }
+        self._stream_url = stream_url
         self._pool = ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="event-rpt"
         )
@@ -194,8 +195,12 @@ class EventReporter:
 
     def _post_heartbeat(self):
         try:
+            body = {}
+            if self._stream_url:
+                body["stream_url"] = self._stream_url
             requests.post(
                 f"{self._api_url}/api/v1/device/heartbeat",
+                json=body if body else None,
                 headers=self._headers,
                 timeout=5,
             )

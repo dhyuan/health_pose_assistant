@@ -1,6 +1,8 @@
 import datetime
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
@@ -225,4 +227,36 @@ def get_dashboard(
             sitting_minutes=row[2],
             away_count=row[3],
         ),
+    )
+
+
+# ---- Video Stream Proxy ----
+
+
+@router.get("/devices/{device_id}/stream")
+async def stream_device_video(
+    device_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if device is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    if not device.stream_url:
+        raise HTTPException(status_code=404, detail="Device has no stream URL")
+
+    # Validate that stream_url points to expected MJPEG path
+    url = device.stream_url
+    if not url.startswith("http://") and not url.startswith("https://"):
+        raise HTTPException(status_code=400, detail="Invalid stream URL scheme")
+
+    async def _proxy_stream():
+        async with httpx.AsyncClient() as client:
+            async with client.stream("GET", url, timeout=None) as resp:
+                async for chunk in resp.aiter_bytes(chunk_size=4096):
+                    yield chunk
+
+    return StreamingResponse(
+        _proxy_stream(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
     )

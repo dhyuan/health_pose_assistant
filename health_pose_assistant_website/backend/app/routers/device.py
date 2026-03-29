@@ -7,7 +7,12 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.deps import get_device_by_token
 from app.models import Device, PostureEvent, DeviceConfigBinding, ConfigProfile
-from app.schemas.schemas import DeviceConfigResponse, EventCreate, HeartbeatResponse
+from app.schemas.schemas import (
+    DeviceConfigResponse,
+    EventCreate,
+    HeartbeatRequest,
+    HeartbeatResponse,
+)
 
 router = APIRouter(prefix="/api/v1/device", tags=["device"])
 
@@ -86,9 +91,12 @@ def report_event(
 
 @router.post("/heartbeat", response_model=HeartbeatResponse)
 def heartbeat(
+    body: HeartbeatRequest = HeartbeatRequest(),
     device: Device = Depends(get_device_by_token),
     db: Session = Depends(get_db),
 ):
     device.last_seen_at = _dt.datetime.now(_dt.timezone.utc)
+    if body.stream_url is not None:
+        device.stream_url = body.stream_url
     db.commit()
     return HeartbeatResponse()

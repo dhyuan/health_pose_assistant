@@ -309,3 +309,48 @@ class TestAdminDashboard:
             headers={"Authorization": f"Bearer {normal_token}"},
         )
         assert resp.status_code == 403
+
+
+class TestDeviceStreamUrl:
+    def test_device_list_includes_stream_url(self, client, admin_headers, db):
+        from app.models import Device
+
+        # Register a device
+        resp = client.post(
+            "/api/v1/admin/devices",
+            json={"device_code": "STREAM-01", "name": "Stream Test"},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["device"]["stream_url"] is None
+
+        # Set stream_url directly
+        device = db.query(Device).filter(Device.device_code == "STREAM-01").first()
+        device.stream_url = "http://mac.local:8080/stream"
+        db.commit()
+
+        # List should show stream_url
+        resp = client.get("/api/v1/admin/devices", headers=admin_headers)
+        devices = resp.json()
+        assert devices[0]["stream_url"] == "http://mac.local:8080/stream"
+
+    def test_stream_device_not_found(self, client, admin_headers):
+        resp = client.get("/api/v1/admin/devices/9999/stream", headers=admin_headers)
+        assert resp.status_code == 404
+
+    def test_stream_device_no_url(self, client, admin_headers):
+        # Register device without stream_url
+        resp = client.post(
+            "/api/v1/admin/devices",
+            json={"device_code": "NO-STREAM", "name": "No Stream"},
+            headers=admin_headers,
+        )
+        device_id = resp.json()["device"]["id"]
+
+        resp = client.get(
+            f"/api/v1/admin/devices/{device_id}/stream",
+            headers=admin_headers,
+        )
+        assert resp.status_code == 404
+        assert "no stream" in resp.json()["detail"].lower()

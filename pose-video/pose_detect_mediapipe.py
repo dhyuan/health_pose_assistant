@@ -910,6 +910,77 @@ def open_local_camera(source: int):
 
 
 # ══════════════════════════════════════════════════════════════
+#  MJPEG 流服务器（浏览器可通过 <img> 直接显示）
+# ══════════════════════════════════════════════════════════════
+
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
+
+
+class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+
+
+class MJPEGStreamHandler(BaseHTTPRequestHandler):
+    """Serves the latest annotated frame as a multipart MJPEG stream."""
+
+    # Class-level shared state (set by MJPEGServer)
+    _latest_frame: bytes = b""
+    _lock = threading.Lock()
+
+    def do_GET(self):
+        path = self.path.split("?")[0]
+        if path != "/stream":
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        try:
+            while True:
+                with MJPEGStreamHandler._lock:
+                    jpeg = MJPEGStreamHandler._latest_frame
+                if not jpeg:
+                    time.sleep(0.05)
+                    continue
+                self.wfile.write(b"--frame\r\n")
+                self.wfile.write(b"Content-Type: image/jpeg\r\n")
+                self.wfile.write(f"Content-Length: {len(jpeg)}\r\n\r\n".encode())
+                self.wfile.write(jpeg)
+                self.wfile.write(b"\r\n")
+                time.sleep(0.033)  # ~30 fps cap
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
+    def log_message(self, format, *args):
+        pass  # suppress request logging
+
+
+class MJPEGServer:
+    """Runs an MJPEG HTTP server in a daemon thread."""
+
+    def __init__(self, port: int):
+        self._port = port
+        self._server: HTTPServer | None = None
+
+    def start(self):
+        self._server = _ThreadingHTTPServer(("0.0.0.0", self._port), MJPEGStreamHandler)
+        t = threading.Thread(
+            target=self._server.serve_forever, name="mjpeg-server", daemon=True
+        )
+        t.start()
+        logger.info("MJPEG stream server started on port %d", self._port)
+
+    def update_frame(self, frame: np.ndarray):
+        """Encode and store the latest frame for streaming."""
+        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        with MJPEGStreamHandler._lock:
+            MJPEGStreamHandler._latest_frame = buf.tobytes()
+
+
+# ══════════════════════════════════════════════════════════════
 #  主循环
 # ══════════════════════════════════════════════════════════════
 
@@ -935,6 +1006,18 @@ def main(args):
     event_reporter = None
     _last_sitting_report: float = time.time()
 
+    # ── MJPEG 流服务器 ──
+    mjpeg_server = None
+    stream_url = None
+    if args.stream_port:
+        mjpeg_server = MJPEGServer(args.stream_port)
+        mjpeg_server.start()
+        # Build URL using hostname for heartbeat reporting
+        import socket as _sock
+
+        _hostname = _sock.gethostname()
+        stream_url = f"http://{_hostname}.local:{args.stream_port}/stream"
+
     if args.api_url and args.device_token:
         from config_client import ConfigClient, EventReporter
 
@@ -948,7 +1031,9 @@ def main(args):
         )
         config_client.start()
 
-        event_reporter = EventReporter(args.api_url, args.device_token)
+        event_reporter = EventReporter(
+            args.api_url, args.device_token, stream_url=stream_url
+        )
 
         # Heartbeat thread (every 30s)
         def _heartbeat_loop():
@@ -1078,6 +1163,11 @@ def main(args):
             frame = rotate_frame(frame, cfg["video_rotation_angle"])
             # ── 画面叠加 ──────────────────────────────────────
             draw_overlay(frame, sm_result, exercise, current_fps, cfg)
+
+            # ── MJPEG 推流 ────────────────────────────────────
+            if mjpeg_server is not None:
+                mjpeg_server.update_frame(frame)
+
             cv2.imshow("Health Assistant", frame)
 
             if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -1121,6 +1211,12 @@ if __name__ == "__main__":
         type=int,
         default=10,
         help="配置轮询间隔秒数（默认 10）",
+    )
+    parser.add_argument(
+        "--stream-port",
+        type=int,
+        default=8080,
+        help="MJPEG 流服务端口（默认 8080，设为 0 禁用）",
     )
     args = parser.parse_args()
     CONFIG["video_rotation_angle"] = args.rotation

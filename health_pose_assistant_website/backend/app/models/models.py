@@ -45,6 +45,7 @@ class Device(Base):
     last_seen_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    stream_url: Mapped[str | None] = mapped_column(String(512))
 
     owner: Mapped["User"] = relationship(back_populates="devices")
     tokens: Mapped[list["DeviceToken"]] = relationship(
