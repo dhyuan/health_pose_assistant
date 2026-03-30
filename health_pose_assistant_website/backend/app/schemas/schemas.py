@@ -2,6 +2,12 @@ import datetime
 from pydantic import BaseModel, EmailStr
 
 
+class DeviceStatusSpan(BaseModel):
+    start: str
+    end: str | None
+    status: str  # "online" or "offline"
+
+
 # ---- Auth ----
 
 
@@ -137,3 +143,4 @@ class SittingSessionOut(BaseModel):
 class SittingSessionsResponse(BaseModel):
     sitting_alert_minutes: int
     sessions: list[SittingSessionOut]
+    device_status_spans: list[DeviceStatusSpan] = []

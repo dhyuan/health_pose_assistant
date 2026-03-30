@@ -10,6 +10,8 @@ from app.core.config import get_settings
 from app.routers import auth, device, admin
 from app.tasks import run_aggregation
 
+logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 

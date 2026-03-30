@@ -6,6 +6,7 @@ from .models import (
     DeviceConfigBinding,
     PostureEvent,
     DailyStat,
+    DeviceStatus,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "DeviceConfigBinding",
     "PostureEvent",
     "DailyStat",
+    "DeviceStatus",
 ]

@@ -1,4 +1,5 @@
 import datetime as _dt
+import logging
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import Integer, cast, func
@@ -6,7 +7,13 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.deps import get_device_by_token
-from app.models import Device, PostureEvent, DeviceConfigBinding, ConfigProfile
+from app.models import (
+    Device,
+    PostureEvent,
+    DeviceConfigBinding,
+    ConfigProfile,
+    DeviceStatus,
+)
 from app.schemas.schemas import (
     DeviceConfigResponse,
     EventCreate,
@@ -95,8 +102,27 @@ def heartbeat(
     device: Device = Depends(get_device_by_token),
     db: Session = Depends(get_db),
 ):
+    logging.warning(f"[HEARTBEAT] Received heartbeat from device {device.id}")
     device.last_seen_at = _dt.datetime.now(_dt.timezone.utc)
     if body.stream_url is not None:
         device.stream_url = body.stream_url
+
+    # 检查 device_status，若无记录或为offline则插入online
+    latest_status = (
+        db.query(DeviceStatus)
+        .filter(DeviceStatus.device_id == device.id)
+        .order_by(DeviceStatus.changed_at.desc())
+        .first()
+    )
+    if latest_status is None or latest_status.status == "offline":
+        logging.warning(f"[HEARTBEAT] Device {device.id} status set to online at {device.last_seen_at}")
+        db.add(DeviceStatus(
+            device_id=device.id,
+            status="online",
+            changed_at=device.last_seen_at,
+            extra=None,
+        ))
+    else:
+        logging.info(f"[HEARTBEAT] Device {device.id} already online, no status record inserted.")
     db.commit()
     return HeartbeatResponse()

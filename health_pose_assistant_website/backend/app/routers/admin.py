@@ -241,9 +241,50 @@ def get_sitting_sessions(
         for e in events
     ]
 
+    # 查询 device_status 区间
+    device_status_spans = []
+    if device_id is not None:
+        from app.models import DeviceStatus
+
+        # 只查当天的
+        status_q = (
+            db.query(DeviceStatus)
+            .filter(
+                DeviceStatus.device_id == device_id,
+                DeviceStatus.changed_at >= start_dt,
+                DeviceStatus.changed_at < end_dt,
+            )
+            .order_by(DeviceStatus.changed_at.asc())
+        )
+        status_rows = status_q.all()
+        # 组装区间
+        prev = None
+        for row in status_rows:
+            if prev is not None:
+                device_status_spans.append(
+                    {
+                        "start": prev.changed_at.isoformat(),
+                        "end": row.changed_at.isoformat(),
+                        "status": prev.status,
+                    }
+                )
+            prev = row
+        # 最后一段（如果还在线）
+        if prev is not None:
+            device_status_spans.append(
+                {
+                    "start": prev.changed_at.isoformat(),
+                    "end": None
+                    if prev.status == "online"
+                    else prev.changed_at.isoformat(),
+                    "status": prev.status,
+                }
+            )
+
     return SittingSessionsResponse(
         sitting_alert_minutes=alert_mins,
         sessions=sessions,
+        device_status_spans=device_status_spans,
     )
 
 

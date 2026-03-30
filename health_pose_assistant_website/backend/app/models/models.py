@@ -56,6 +56,7 @@ class Device(Base):
     )
     events: Mapped[list["PostureEvent"]] = relationship(back_populates="device")
     daily_stats: Mapped[list["DailyStat"]] = relationship(back_populates="device")
+    status: Mapped["DeviceStatus"] = relationship(back_populates="device")
 
 
 class DeviceToken(Base):
@@ -142,3 +143,19 @@ class DailyStat(Base):
     away_count: Mapped[int] = mapped_column(Integer, default=0)
 
     device: Mapped["Device"] = relationship(back_populates="daily_stats")
+
+
+class DeviceStatus(Base):
+    __tablename__ = "device_status"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    device_id: Mapped[int] = mapped_column(
+        ForeignKey("devices.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    changed_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    extra: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    device: Mapped["Device"] = relationship("Device")
