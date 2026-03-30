@@ -198,16 +198,12 @@ class EventReporter:
             body = {}
             if self._stream_url:
                 body["stream_url"] = self._stream_url
-            logger.info(
-                "Sending heartbeat to %s", f"{self._api_url}/api/v1/device/heartbeat"
-            )
             requests.post(
                 f"{self._api_url}/api/v1/device/heartbeat",
                 json=body if body else None,
                 headers=self._headers,
                 timeout=5,
             )
-            logger.info("Heartbeat sent successfully.")
         except Exception:
             logger.warning("Heartbeat failed", exc_info=True)
 
