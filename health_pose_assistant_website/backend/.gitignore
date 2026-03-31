@@ -1,4 +1,4 @@
-hpa_backend/
+hpa_backend_env/
 __pycache__/
 *.pyc
 .env
