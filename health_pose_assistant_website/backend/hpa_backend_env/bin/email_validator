@@ -1,0 +1,6 @@
+#!/Users/dhyuan/github/health-video-assistant/health_pose_assistant_website/backend/hpa_backend/bin/python3.11
+import sys
+from email_validator.__main__ import main
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(main())
