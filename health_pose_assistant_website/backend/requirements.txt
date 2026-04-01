@@ -5,7 +5,9 @@ alembic>=1.13,<2.0
 psycopg2-binary>=2.9,<3.0
 python-jose[cryptography]>=3.3,<4.0
 passlib[bcrypt]>=1.7,<2.0
-bcrypt>=4.0,<4.3
+# Pin bcrypt to a 3.x release compatible with passlib 1.7.x to avoid
+# a non-fatal warning when passlib inspects bcrypt internals.
+bcrypt==3.2.2
 python-dotenv>=1.0,<2.0
 pydantic[email]>=2.0,<3.0
 pydantic-settings>=2.0,<3.0

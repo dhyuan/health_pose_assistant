@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 # Use a dedicated test database (same server, different db name)
 _settings = get_settings()
 _base_url = _settings.DATABASE_URL.rsplit("/", 1)[0]
-TEST_DB_URL = f"{_base_url}/health_video_test"
+TEST_DB_URL = f"{_base_url}/health_pose_assistant_test"
 
 engine = create_engine(TEST_DB_URL, pool_pre_ping=True)
 TestSession = sessionmaker(bind=engine, autocommit=False, autoflush=False)
@@ -36,8 +36,8 @@ app.dependency_overrides[get_db] = _override_get_db
 @pytest.fixture(scope="session", autouse=True)
 def create_test_db():
     """Ensure test DB is reachable. Create manually if needed:
-    createdb health_video_test
-    psql health_video_test -c "GRANT ALL ON SCHEMA public TO hva_user;"
+    createdb health_pose_assistant_test
+    psql health_pose_assistant_test -c "GRANT ALL ON SCHEMA public TO hva_user;"
     """
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))

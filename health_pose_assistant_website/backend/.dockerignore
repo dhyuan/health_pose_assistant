@@ -1,0 +1,11 @@
+__pycache__
+*.pyc
+*.pyo
+.DS_Store
+venv
+hpa_backend_env
+pose_ai_env
+.env
+.env.local
+.env.docker
+.git
