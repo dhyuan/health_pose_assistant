@@ -11,7 +11,7 @@
 ### 1. PostgreSQL 数据库
 
 - 通过 Homebrew 安装 PostgreSQL 16
-- 创建数据库 `health_video`（开发）和 `health_video_test`（测试）
+- 创建数据库 `health_pose_assistant`（开发）和 `health_pose_assistant_test`（测试）
 - 创建用户 `hva_user`，密码 `hva_dev_pass123`
 
 ### 2. 7 张 ORM 表
@@ -87,7 +87,7 @@ health_pose_assistant_website/
     ├── alembic/
     │   ├── env.py
     │   └── versions/3a324cf4391b_initial_tables.py
-    ├── hpa_backend/          (Python 3.11 venv)
+    ├── _hpa_backend_env/          (Python 3.11 venv)
     ├── app/
     │   ├── main.py
     │   ├── deps.py
@@ -111,14 +111,14 @@ health_pose_assistant_website/
 ## 已知事项
 
 - `passlib` 与 `bcrypt>=4.3` 不兼容，已在 requirements.txt 锁定 `bcrypt>=4.0,<4.3`
-- 运行测试前需先创建 `health_video_test` 数据库（setup_dev.sh 未自动处理测试库）
+- 运行测试前需先创建 `health_pose_assistant_test` 数据库（setup_dev.sh 未自动处理测试库）
 - `config_json` 为全量替换（PUT 时整体覆盖，非合并）
 
 ## 启动方式
 
 ```bash
 cd backend
-source hpa_backend/bin/activate
+source hpa_backend_env/bin/activate
 uvicorn app.main:app --reload --port 8000
 # API 文档: http://localhost:8000/docs
 # 运行测试: python -m pytest tests/ -v

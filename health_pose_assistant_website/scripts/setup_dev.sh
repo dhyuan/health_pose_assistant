@@ -11,10 +11,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 BACKEND_DIR="$PROJECT_ROOT/backend"
 FRONTEND_DIR="$PROJECT_ROOT/frontend"
-VENV_DIR="$BACKEND_DIR/hpa_backend"
+VENV_DIR="$BACKEND_DIR/hpa_backend_env"
 REQUIRED_NODE_MAJOR=22
 
-DB_NAME="${HPA_DB_NAME:-health_video}"
+DB_NAME="${HPA_DB_NAME:-health_pose_assistant}"
 DB_USER="${HPA_DB_USER:-hva_user}"
 DB_PASS="${HPA_DB_PASS:-hva_dev_pass123}"
 ADMIN_EMAIL="${HPA_ADMIN_EMAIL:-admin@example.com}"
@@ -148,7 +148,7 @@ setup_env() {
     if [[ ! -f "$BACKEND_DIR/.env" ]]; then
         info "Creating .env from .env.example..."
         sed \
-            -e "s|postgresql://hva_user:changeme@localhost/health_video|postgresql://$DB_USER:$DB_PASS@localhost/$DB_NAME|" \
+            -e "s|postgresql://hva_user:changeme@localhost/health_pose_assistant|postgresql://$DB_USER:$DB_PASS@localhost/$DB_NAME|" \
             -e "s|changeme-secret-key|$(openssl rand -hex 32)|" \
             "$BACKEND_DIR/.env.example" > "$BACKEND_DIR/.env"
         info ".env created."
@@ -209,7 +209,7 @@ main() {
     echo ""
     echo "  Start the backend:"
     echo "    cd $BACKEND_DIR"
-    echo "    source hpa_backend/bin/activate"
+    echo "    source hpa_backend_env/bin/activate"
     echo "    uvicorn app.main:app --reload"
     echo ""
     echo "  Start the frontend:"

@@ -39,6 +39,10 @@ fi
 # --- Start backend ---
 echo -e "${GREEN}[INFO]${NC} Starting backend (uvicorn) on :8000 ..."
 cd "$BACKEND_DIR"
+# if [ -z "${DATABASE_URL:-}" ]; then
+#     echo -e "${GREEN}[INFO]${NC} DATABASE_URL not set; defaulting to host Postgres at localhost:5432"
+#     export DATABASE_URL="postgresql://hpa_user:hpa_pass@localhost:5432/health_pose_assistant"
+# fi
 "$VENV_PYTHON" -m uvicorn app.main:app --reload --port 8000 &
 BACKEND_PID=$!
 

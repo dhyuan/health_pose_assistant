@@ -34,23 +34,23 @@ sudo systemctl enable --now postgresql
 
 ```bash
 # macOS (current OS user is superuser by default)
-createdb health_video
-psql health_video -c "CREATE USER hva_user WITH PASSWORD 'hva_dev_pass123';"
-psql health_video -c "GRANT ALL PRIVILEGES ON DATABASE health_video TO hva_user;"
-psql health_video -c "GRANT ALL ON SCHEMA public TO hva_user;"
+createdb health_pose_assistant
+psql health_pose_assistant -c "CREATE USER hva_user WITH PASSWORD 'hva_dev_pass123';"
+psql health_pose_assistant -c "GRANT ALL PRIVILEGES ON DATABASE health_pose_assistant TO hva_user;"
+psql health_pose_assistant -c "GRANT ALL ON SCHEMA public TO hva_user;"
 
 # Also create the test database
-createdb health_video_test
-psql health_video_test -c "GRANT ALL PRIVILEGES ON DATABASE health_video_test TO hva_user;"
-psql health_video_test -c "GRANT ALL ON SCHEMA public TO hva_user;"
+createdb health_pose_assistant_test
+psql health_pose_assistant_test -c "GRANT ALL PRIVILEGES ON DATABASE health_pose_assistant_test TO hva_user;"
+psql health_pose_assistant_test -c "GRANT ALL ON SCHEMA public TO hva_user;"
 ```
 
 ### 3. Create Virtual Environment & Install Dependencies
 
 ```bash
 cd backend
-python3.11 -m venv hpa_backend
-source hpa_backend/bin/activate
+python3.11 -m venv hpa_backend_env
+source hpa_backend_env/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
@@ -78,7 +78,7 @@ python ../scripts/seed_admin.py --email admin@example.com --password admin123
 
 ```bash
 cd backend
-source hpa_backend/bin/activate
+source hpa_backend_env/bin/activate
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -88,11 +88,11 @@ API docs available at: http://localhost:8000/docs
 
 ```bash
 cd backend
-source hpa_backend/bin/activate
+source hpa_backend_env/bin/activate
 python -m pytest tests/ -v
 ```
 
-Test database (`health_video_test`) must exist before running tests — see step 2 above.
+Test database (`health_pose_assistant_test`) must exist before running tests — see step 2 above.
 
 ### Test Coverage Summary
 

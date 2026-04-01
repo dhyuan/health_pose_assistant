@@ -194,7 +194,7 @@ health_pose_assistant_website/
 ```bash
 # 后端
 cd backend
-source hpa_backend/bin/activate
+source hpa_backend_env/bin/activate
 uvicorn app.main:app --reload --port 8000
 
 # 前端
