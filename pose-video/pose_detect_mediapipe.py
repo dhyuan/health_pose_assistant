@@ -27,8 +27,17 @@ import struct
 import subprocess
 import threading
 import time
+import warnings
 from enum import Enum, auto
 import cv2
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"SymbolDatabase\.GetPrototype\(\) is deprecated.*",
+    category=UserWarning,
+    module=r"google\.protobuf\.symbol_database",
+)
+
 import mediapipe as mp
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
