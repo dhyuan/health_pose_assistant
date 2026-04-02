@@ -63,10 +63,10 @@ The gallery below is wired for real project screenshots. Place your images at th
 
 | Page | Preview |
 |---|---|
-| Dashboard / Stats | ![Stats Page](docs/screenshots/stats-page.png) |
-| Edge Pose Detection | ![Pose Detection Screen](docs/screenshots/pose-detection.png) |
-| Settings / Parameters | ![Settings Page](docs/screenshots/settings-parameters.png) |
-| Device Management | ![Device Management Page](docs/screenshots/devices-page.png) |
+| Dashboard / Stats | ![Stats Page](docs/screenshots/stats-page.jpg) |
+| Edge Pose Detection | ![Pose Detection Screen](docs/screenshots/pose-detection.jpg) |
+| Settings / Parameters | ![Settings Page](docs/screenshots/settings-parameters.jpg) |
+| Device Management | ![Device Management Page](docs/screenshots/devices-page.jpg) |
 
 ## Tech Stack
 
