@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.routers import auth, device, admin
-from app.tasks import run_aggregation
+from app.tasks import run_aggregation, mark_stale_devices_offline
 
 logging.basicConfig(level=logging.INFO)
 
@@ -24,10 +24,19 @@ async def lifespan(app: FastAPI):
         id="aggregate_stats",
         replace_existing=True,
     )
+    scheduler.add_job(
+        mark_stale_devices_offline,
+        IntervalTrigger(minutes=1),
+        id="mark_stale_devices_offline",
+        replace_existing=True,
+    )
     scheduler.start()
-    logger.info("APScheduler started — aggregation every 10 min")
+    logger.info(
+        "APScheduler started — aggregation every 10 min, offline check every 1 min"
+    )
     # Run once at startup to catch up
     run_aggregation()
+    mark_stale_devices_offline()
     yield
     scheduler.shutdown()
 

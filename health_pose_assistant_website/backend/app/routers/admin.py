@@ -246,7 +246,15 @@ def get_sitting_sessions(
     if device_id is not None:
         from app.models import DeviceStatus
 
-        # 只查当天的
+        latest_before_start = (
+            db.query(DeviceStatus)
+            .filter(
+                DeviceStatus.device_id == device_id,
+                DeviceStatus.changed_at < start_dt,
+            )
+            .order_by(DeviceStatus.changed_at.desc())
+            .first()
+        )
         status_q = (
             db.query(DeviceStatus)
             .filter(
@@ -257,27 +265,37 @@ def get_sitting_sessions(
             .order_by(DeviceStatus.changed_at.asc())
         )
         status_rows = status_q.all()
-        # 组装区间
-        prev = None
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        visible_end = min(end_dt, now_utc)
+
+        current_status = latest_before_start.status if latest_before_start else None
+        current_start = start_dt if latest_before_start else None
+
         for row in status_rows:
-            if prev is not None:
-                device_status_spans.append(
-                    {
-                        "start": prev.changed_at.isoformat(),
-                        "end": row.changed_at.isoformat(),
-                        "status": prev.status,
-                    }
-                )
-            prev = row
-        # 最后一段（如果还在线）
-        if prev is not None:
+            if current_status is not None and current_start is not None:
+                span_end = min(row.changed_at, end_dt)
+                if current_start < span_end:
+                    device_status_spans.append(
+                        {
+                            "start": current_start.isoformat(),
+                            "end": span_end.isoformat(),
+                            "status": current_status,
+                        }
+                    )
+
+            current_status = row.status
+            current_start = max(row.changed_at, start_dt)
+
+        if (
+            current_status is not None
+            and current_start is not None
+            and current_start < visible_end
+        ):
             device_status_spans.append(
                 {
-                    "start": prev.changed_at.isoformat(),
-                    "end": None
-                    if prev.status == "online"
-                    else prev.changed_at.isoformat(),
-                    "status": prev.status,
+                    "start": current_start.isoformat(),
+                    "end": visible_end.isoformat(),
+                    "status": current_status,
                 }
             )
 
@@ -298,7 +316,7 @@ def get_dashboard(
 ):
     total_devices = db.query(sa_func.count(Device.id)).scalar() or 0
     now = datetime.datetime.now(datetime.timezone.utc)
-    cutoff = now - datetime.timedelta(seconds=60)
+    cutoff = now - datetime.timedelta(minutes=5)
     online_devices = (
         db.query(sa_func.count(Device.id))
         .filter(Device.last_seen_at >= cutoff)

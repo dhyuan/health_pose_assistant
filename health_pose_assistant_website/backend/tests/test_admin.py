@@ -2,7 +2,7 @@
 
 import datetime
 
-from app.models import DailyStat, Device, PostureEvent
+from app.models import DailyStat, Device, DeviceStatus, PostureEvent
 
 
 class TestAdminDevices:
@@ -228,7 +228,7 @@ class TestAdminDashboard:
 
     def test_dashboard_with_data(self, client, admin_headers, device_with_token, db):
         device, _ = device_with_token
-        # Mark device as online (last_seen_at within 60s)
+        # Mark device as online (last_seen_at within 5 min)
         device.last_seen_at = datetime.datetime.now(datetime.timezone.utc)
         db.add(device)
 
@@ -251,6 +251,20 @@ class TestAdminDashboard:
         assert data["online_devices"] == 1
         assert data["today"]["bad_posture_count"] == 7
         assert data["today"]["sitting_minutes"] == 200
+
+    def test_dashboard_excludes_stale_device_after_5_minutes(
+        self, client, admin_headers, device_with_token, db
+    ):
+        device, _ = device_with_token
+        device.last_seen_at = datetime.datetime.now(
+            datetime.timezone.utc
+        ) - datetime.timedelta(minutes=6)
+        db.add(device)
+        db.commit()
+
+        resp = client.get("/api/v1/admin/dashboard", headers=admin_headers)
+        assert resp.status_code == 200
+        assert resp.json()["online_devices"] == 0
 
     def test_stats_filter_by_device(self, client, admin_headers, device_with_token, db):
         device, _ = device_with_token
@@ -467,3 +481,78 @@ class TestSittingSessions:
             headers=admin_headers,
         )
         assert resp.status_code == 422
+
+    def test_sitting_sessions_include_carry_over_status_from_previous_day(
+        self, client, admin_headers, device_with_token, db
+    ):
+        device, _ = device_with_token
+        db.add(
+            DeviceStatus(
+                device_id=device.id,
+                status="online",
+                changed_at=datetime.datetime(
+                    2026, 3, 28, 23, 30, 0, tzinfo=datetime.timezone.utc
+                ),
+                extra=None,
+            )
+        )
+        db.commit()
+
+        resp = client.get(
+            f"/api/v1/admin/sitting-sessions?date=2026-03-29&device_id={device.id}",
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        spans = resp.json()["device_status_spans"]
+        assert spans == [
+            {
+                "start": "2026-03-29T00:00:00+00:00",
+                "end": "2026-03-30T00:00:00+00:00",
+                "status": "online",
+            }
+        ]
+
+    def test_sitting_sessions_extend_last_offline_status_to_day_end(
+        self, client, admin_headers, device_with_token, db
+    ):
+        device, _ = device_with_token
+        db.add_all(
+            [
+                DeviceStatus(
+                    device_id=device.id,
+                    status="online",
+                    changed_at=datetime.datetime(
+                        2026, 3, 29, 8, 0, 0, tzinfo=datetime.timezone.utc
+                    ),
+                    extra=None,
+                ),
+                DeviceStatus(
+                    device_id=device.id,
+                    status="offline",
+                    changed_at=datetime.datetime(
+                        2026, 3, 29, 12, 0, 0, tzinfo=datetime.timezone.utc
+                    ),
+                    extra=None,
+                ),
+            ]
+        )
+        db.commit()
+
+        resp = client.get(
+            f"/api/v1/admin/sitting-sessions?date=2026-03-29&device_id={device.id}",
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        spans = resp.json()["device_status_spans"]
+        assert spans == [
+            {
+                "start": "2026-03-29T08:00:00+00:00",
+                "end": "2026-03-29T12:00:00+00:00",
+                "status": "online",
+            },
+            {
+                "start": "2026-03-29T12:00:00+00:00",
+                "end": "2026-03-30T00:00:00+00:00",
+                "status": "offline",
+            },
+        ]

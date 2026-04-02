@@ -7,9 +7,11 @@ from sqlalchemy import Integer, case, cast, func
 from sqlalchemy.orm import Session
 
 from app.db.base import SessionLocal
-from app.models import DailyStat, PostureEvent
+from app.models import DailyStat, Device, DeviceStatus, PostureEvent
 
 logger = logging.getLogger(__name__)
+
+HEARTBEAT_OFFLINE_TIMEOUT = datetime.timedelta(minutes=5)
 
 
 import zoneinfo
@@ -104,5 +106,44 @@ def run_aggregation(tz: str = "Pacific/Auckland"):
     except Exception:
         logger.exception("Aggregation failed")
         db.rollback()
+    finally:
+        db.close()
+
+
+def mark_stale_devices_offline():
+    """Mark devices as offline if heartbeat is stale for more than timeout."""
+    db = SessionLocal()
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    cutoff = now_utc - HEARTBEAT_OFFLINE_TIMEOUT
+    inserted = 0
+    try:
+        stale_devices = (
+            db.query(Device)
+            .filter(Device.last_seen_at.is_not(None), Device.last_seen_at < cutoff)
+            .all()
+        )
+        for device in stale_devices:
+            latest_status = (
+                db.query(DeviceStatus)
+                .filter(DeviceStatus.device_id == device.id)
+                .order_by(DeviceStatus.changed_at.desc())
+                .first()
+            )
+            if latest_status is None or latest_status.status != "offline":
+                db.add(
+                    DeviceStatus(
+                        device_id=device.id,
+                        status="offline",
+                        changed_at=now_utc,
+                        extra={"reason": "heartbeat_timeout"},
+                    )
+                )
+                inserted += 1
+        if inserted:
+            logger.info("Marked %s devices offline due to heartbeat timeout", inserted)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to mark stale devices offline")
     finally:
         db.close()
