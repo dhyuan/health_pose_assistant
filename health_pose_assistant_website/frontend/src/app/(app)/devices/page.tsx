@@ -47,6 +47,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
+import { useI18n } from "@/i18n/provider";
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -56,6 +57,7 @@ function isOnline(lastSeenAt: string | null): boolean {
 }
 
 export default function DevicesPage() {
+  const { t, languageTag } = useI18n();
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -80,7 +82,7 @@ export default function DevicesPage() {
 
   // Video stream dialog
   const [videoDevice, setVideoDevice] = useState<Device | null>(null);
-  const [streamKey, setStreamKey] = useState(0);
+  const [streamKey] = useState(0);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -89,11 +91,11 @@ export default function DevicesPage() {
       const data = await listDevices();
       setDevices(data);
     } catch {
-      toast.error("加载设备列表失败");
+      toast.error(t("devices.loadFailed"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     fetchDevices();
@@ -112,9 +114,9 @@ export default function DevicesPage() {
       setRegCode("");
       setRegName("");
       setTokenToShow(data.plain_token);
-      toast.success("设备注册成功");
+      toast.success(t("devices.registerSuccess"));
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "注册失败";
+      const msg = e instanceof Error ? e.message : t("devices.registerFailed");
       toast.error(msg);
     } finally {
       setRegLoading(false);
@@ -129,9 +131,9 @@ export default function DevicesPage() {
         prev.map((d) => (d.id === updated.id ? updated : d)),
       );
       setRenameDevice(null);
-      toast.success("设备名称已更新");
+      toast.success(t("devices.renameSuccess"));
     } catch {
-      toast.error("更新失败");
+      toast.error(t("devices.updateFailed"));
     }
   }
 
@@ -141,9 +143,9 @@ export default function DevicesPage() {
       await deleteDevice(deleteTarget.id);
       setDevices((prev) => prev.filter((d) => d.id !== deleteTarget.id));
       setDeleteTarget(null);
-      toast.success("设备已删除");
+      toast.success(t("devices.deleteSuccess"));
     } catch {
-      toast.error("删除失败");
+      toast.error(t("devices.deleteFailed"));
     }
   }
 
@@ -156,50 +158,52 @@ export default function DevicesPage() {
       );
       setRegenTarget(null);
       setTokenToShow(data.plain_token);
-      toast.success("Token 已重新生成");
+      toast.success(t("devices.tokenRegenSuccess"));
     } catch {
-      toast.error("重新生成失败");
+      toast.error(t("devices.tokenRegenFailed"));
     }
   }
 
   return (
     <div>
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold">设备管理</h1>
+        <h1 className="text-2xl font-bold">{t("devices.title")}</h1>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={fetchDevices}>
-            刷新
+            {t("common.refresh")}
           </Button>
           <Button size="sm" onClick={() => setShowRegister(true)}>
-            注册设备
+            {t("devices.register")}
           </Button>
         </div>
       </div>
 
       {loading ? (
-        <p className="text-muted-foreground">加载中…</p>
+        <p className="text-muted-foreground">{t("common.loading")}</p>
       ) : devices.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
-            暂无设备，点击「注册设备」添加第一台设备。
+            {t("devices.empty")}
           </CardContent>
         </Card>
       ) : (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
-              共 {devices.length} 台设备
+              {t("devices.total", { count: devices.length })}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>设备编号</TableHead>
-                  <TableHead>名称</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>最后在线</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
+                  <TableHead>{t("devices.code")}</TableHead>
+                  <TableHead>{t("devices.name")}</TableHead>
+                  <TableHead>{t("devices.status")}</TableHead>
+                  <TableHead>{t("devices.lastSeen")}</TableHead>
+                  <TableHead className="text-right">
+                    {t("devices.actions")}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -211,15 +215,21 @@ export default function DevicesPage() {
                     <TableCell>{device.name}</TableCell>
                     <TableCell>
                       {isOnline(device.last_seen_at) ? (
-                        <Badge className="bg-green-600">在线</Badge>
+                        <Badge className="bg-green-600">
+                          {t("devices.online")}
+                        </Badge>
                       ) : (
-                        <Badge variant="secondary">离线</Badge>
+                        <Badge variant="secondary">
+                          {t("devices.offline")}
+                        </Badge>
                       )}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {device.last_seen_at
-                        ? new Date(device.last_seen_at).toLocaleString("zh-CN")
-                        : "从未连接"}
+                        ? new Date(device.last_seen_at).toLocaleString(
+                            languageTag,
+                          )
+                        : t("devices.neverSeen")}
                     </TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>
@@ -232,7 +242,7 @@ export default function DevicesPage() {
                               <DropdownMenuItem
                                 onClick={() => setVideoDevice(device)}
                               >
-                                查看视频
+                                {t("devices.viewVideo")}
                               </DropdownMenuItem>
                             )}
                           <DropdownMenuItem
@@ -240,7 +250,7 @@ export default function DevicesPage() {
                               window.location.href = `/stats?device_id=${device.id}`;
                             }}
                           >
-                            查看统计
+                            {t("devices.viewStats")}
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={() => {
@@ -248,18 +258,18 @@ export default function DevicesPage() {
                               setRenameName(device.name);
                             }}
                           >
-                            重命名
+                            {t("devices.rename")}
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={() => setRegenTarget(device)}
                           >
-                            重新生成 Token
+                            {t("devices.regenToken")}
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             className="text-red-600"
                             onClick={() => setDeleteTarget(device)}
                           >
-                            删除设备
+                            {t("devices.delete")}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -276,26 +286,26 @@ export default function DevicesPage() {
       <Dialog open={showRegister} onOpenChange={setShowRegister}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>注册新设备</DialogTitle>
+            <DialogTitle>{t("devices.registerDialogTitle")}</DialogTitle>
             <DialogDescription>
-              输入设备编号和名称。注册后会生成一个 Token，请立即复制保存。
+              {t("devices.registerDialogDescription")}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label htmlFor="device-code">设备编号</Label>
+              <Label htmlFor="device-code">{t("devices.deviceCode")}</Label>
               <Input
                 id="device-code"
-                placeholder="例如: PI-001"
+                placeholder={t("devices.exampleCode")}
                 value={regCode}
                 onChange={(e) => setRegCode(e.target.value)}
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="device-name">设备名称</Label>
+              <Label htmlFor="device-name">{t("devices.deviceName")}</Label>
               <Input
                 id="device-name"
-                placeholder="例如: 客厅"
+                placeholder={t("devices.exampleName")}
                 value={regName}
                 onChange={(e) => setRegName(e.target.value)}
               />
@@ -306,7 +316,7 @@ export default function DevicesPage() {
               onClick={handleRegister}
               disabled={regLoading || !regCode.trim() || !regName.trim()}
             >
-              {regLoading ? "注册中…" : "注册"}
+              {regLoading ? t("devices.registering") : t("devices.register")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -321,9 +331,9 @@ export default function DevicesPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>设备 Token</DialogTitle>
+            <DialogTitle>{t("devices.tokenTitle")}</DialogTitle>
             <DialogDescription>
-              请立即复制此 Token。关闭对话框后将无法再次查看。
+              {t("devices.tokenDescription")}
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-md bg-muted p-3">
@@ -335,13 +345,15 @@ export default function DevicesPage() {
               onClick={() => {
                 if (tokenToShow) {
                   navigator.clipboard.writeText(tokenToShow);
-                  toast.success("已复制到剪贴板");
+                  toast.success(t("devices.copied"));
                 }
               }}
             >
-              复制 Token
+              {t("devices.copyToken")}
             </Button>
-            <Button onClick={() => setTokenToShow(null)}>关闭</Button>
+            <Button onClick={() => setTokenToShow(null)}>
+              {t("common.close")}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -355,10 +367,10 @@ export default function DevicesPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>重命名设备</DialogTitle>
+            <DialogTitle>{t("devices.rename")}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-2 py-4">
-            <Label htmlFor="rename-input">新名称</Label>
+            <Label htmlFor="rename-input">{t("devices.newName")}</Label>
             <Input
               id="rename-input"
               value={renameName}
@@ -367,7 +379,7 @@ export default function DevicesPage() {
           </div>
           <DialogFooter>
             <Button onClick={handleRename} disabled={!renameName.trim()}>
-              保存
+              {t("devices.save")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -382,19 +394,23 @@ export default function DevicesPage() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>确认删除设备？</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t("devices.deleteConfirmTitle")}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              将永久删除设备「{deleteTarget?.name}」(
-              {deleteTarget?.device_code})及其所有关联数据。此操作不可撤销。
+              {t("devices.deleteConfirmDescription", {
+                name: deleteTarget?.name ?? "",
+                code: deleteTarget?.device_code ?? "",
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-red-600 hover:bg-red-700"
               onClick={handleDelete}
             >
-              删除
+              {t("common.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -409,16 +425,19 @@ export default function DevicesPage() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>重新生成 Token？</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t("devices.regenConfirmTitle")}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              旧 Token 将立即失效，设备「{regenTarget?.name}」需要更新为新 Token
-              才能继续连接。
+              {t("devices.regenConfirmDescription", {
+                name: regenTarget?.name ?? "",
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction onClick={handleRegenToken}>
-              确认重新生成
+              {t("devices.regenConfirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -430,6 +449,8 @@ export default function DevicesPage() {
           device={videoDevice}
           streamKey={streamKey}
           onClose={() => setVideoDevice(null)}
+          title={t("devices.liveVideo")}
+          altTemplate={t("devices.videoAlt", { name: videoDevice.name })}
         />
       )}
     </div>
@@ -442,10 +463,14 @@ function VideoWindow({
   device,
   streamKey,
   onClose,
+  title,
+  altTemplate,
 }: {
   device: Device;
   streamKey: number;
   onClose: () => void;
+  title: string;
+  altTemplate: string;
 }) {
   const DEFAULT_W = 640;
   const DEFAULT_H = 520;
@@ -519,7 +544,7 @@ function VideoWindow({
         }}
       >
         <span className="select-none text-sm font-medium truncate">
-          实时视频 — {device.name} ({device.device_code})
+          {title} - {device.name} ({device.device_code})
         </span>
         <button
           onClick={onClose}
@@ -534,7 +559,7 @@ function VideoWindow({
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={`/api/admin/devices/${device.id}/stream?t=${streamKey}`}
-          alt={`${device.name} 视频流`}
+          alt={altTemplate}
           className="h-full w-full object-contain"
           draggable={false}
         />

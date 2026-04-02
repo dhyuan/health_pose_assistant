@@ -5,10 +5,12 @@ import { DashboardData, getDashboard } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { useI18n } from "@/i18n/provider";
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 export default function DashboardPage() {
+  const { t } = useI18n();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -18,11 +20,11 @@ export default function DashboardPage() {
       const d = await getDashboard();
       setData(d);
     } catch {
-      toast.error("加载仪表盘失败");
+      toast.error(t("dashboard.loadFailed"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     fetchDashboard();
@@ -33,36 +35,36 @@ export default function DashboardPage() {
   }, [fetchDashboard]);
 
   if (loading) {
-    return <p className="text-muted-foreground">加载中…</p>;
+    return <p className="text-muted-foreground">{t("common.loading")}</p>;
   }
 
   if (!data) {
-    return <p className="text-muted-foreground">无法加载数据</p>;
+    return <p className="text-muted-foreground">{t("dashboard.noData")}</p>;
   }
 
   const statCards = [
     {
-      title: "不良姿势",
+      title: t("dashboard.badPosture"),
       value: data.today.bad_posture_count,
-      unit: "次",
+      unit: t("dashboard.times"),
       color: "text-red-600",
     },
     {
-      title: "久坐提醒",
+      title: t("dashboard.prolongedAlert"),
       value: data.today.prolonged_alert_count,
-      unit: "次",
+      unit: t("dashboard.times"),
       color: "text-orange-600",
     },
     {
-      title: "久坐时长",
+      title: t("dashboard.sittingDuration"),
       value: data.today.sitting_minutes,
-      unit: "分钟",
+      unit: t("dashboard.minutes"),
       color: "text-blue-600",
     },
     {
-      title: "离开次数",
+      title: t("dashboard.awayCount"),
       value: data.today.away_count,
-      unit: "次",
+      unit: t("dashboard.times"),
       color: "text-green-600",
     },
   ];
@@ -70,9 +72,9 @@ export default function DashboardPage() {
   return (
     <div>
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold">仪表盘</h1>
+        <h1 className="text-2xl font-bold">{t("dashboard.title")}</h1>
         <Button variant="outline" size="sm" onClick={fetchDashboard}>
-          刷新
+          {t("common.refresh")}
         </Button>
       </div>
 
@@ -81,7 +83,7 @@ export default function DashboardPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              设备总数
+              {t("dashboard.totalDevices")}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -91,7 +93,7 @@ export default function DashboardPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              在线设备
+              {t("dashboard.onlineDevices")}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -103,7 +105,9 @@ export default function DashboardPage() {
       </div>
 
       {/* Today stats */}
-      <h2 className="mb-4 text-lg font-semibold">今日统计</h2>
+      <h2 className="mb-4 text-lg font-semibold">
+        {t("dashboard.todayStats")}
+      </h2>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {statCards.map((card) => (
           <Card key={card.title}>

@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { SittingSession } from "@/lib/api";
 import { useMemo } from "react";
+import { useI18n } from "@/i18n/provider";
 
 import type { DeviceStatusSpan } from "@/lib/api";
 
@@ -24,8 +25,8 @@ function toHourFraction(iso: string): number {
   return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
 }
 
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString("zh-CN", {
+function formatTime(iso: string, languageTag: string): string {
+  return new Date(iso).toLocaleTimeString(languageTag, {
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -40,12 +41,8 @@ function tickInterval(visibleHours: number): number {
 }
 
 export function SittingTimeline(props: SittingTimelineProps) {
-  const {
-    sessions,
-    sittingAlertMinutes,
-    deviceStatusSpans = [],
-    lastSeenAt,
-  } = props;
+  const { t, languageTag } = useI18n();
+  const { sessions, sittingAlertMinutes, deviceStatusSpans = [] } = props;
   // 计算累计坐立时间（小时）
   const totalHours = useMemo(() => {
     return (
@@ -68,14 +65,9 @@ export function SittingTimeline(props: SittingTimelineProps) {
   // --- zoom / pan state ---
   const [zoom, setZoom] = useState(1); // 1 = full view
   const [offset, setOffset] = useState(0); // 0..1-1/zoom, left edge as fraction of total
-  const dragRef = useRef<{ startX: number; startOffset: number } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
   // visible window in hours
-  const clampOffset = useCallback(
-    (o: number, z: number) => Math.max(0, Math.min(o, 1 - 1 / z)),
-    [],
-  );
   const visibleHours = TOTAL_HOURS / zoom;
   const viewStartHour = START_HOUR + offset * TOTAL_HOURS;
   /** Convert an hour fraction to x pixel. */
@@ -114,10 +106,10 @@ export function SittingTimeline(props: SittingTimelineProps) {
       const width = Math.max(x2 - x, 4);
       const isProlonged = s.duration_seconds >= alertSeconds;
       const durationMin = Math.round(s.duration_seconds / 60);
-      const label = `${formatTime(s.start_time)} – ${formatTime(s.end_time)}（${durationMin}分钟${isProlonged ? "，久坐" : ""}）`;
+      const label = `${formatTime(s.start_time, languageTag)} - ${formatTime(s.end_time, languageTag)} (${durationMin}m${isProlonged ? ", prolonged" : ""})`;
       return { x, width, isProlonged, label };
     });
-  }, [sessions, alertSeconds, hourToX]);
+  }, [sessions, alertSeconds, hourToX, languageTag]);
 
   // --- tick marks ---
   const timeLabels = useMemo(() => {
@@ -154,18 +146,9 @@ export function SittingTimeline(props: SittingTimelineProps) {
 
   // --- slider (ruler) state ---
   // sliderStart/End: 0~1, fraction of total range
-  const [slider, setSlider] = useState<{ start: number; end: number }>({
-    start: 0,
-    end: 1,
-  });
-  // Sync slider <-> zoom/offset
-  // When zoom/offset changes, update slider
-  useEffect(() => {
-    setSlider({
-      start: offset,
-      end: offset + 1 / zoom,
-    });
-  }, [zoom, offset]);
+  const sliderStart = offset;
+  const sliderEnd = offset + 1 / zoom;
+
   // When slider changes, update zoom/offset
   const onSliderChange = useCallback((start: number, end: number) => {
     const newZoom = 1 / (end - start);
@@ -191,8 +174,8 @@ export function SittingTimeline(props: SittingTimelineProps) {
     sliderDrag.current = {
       type,
       startX: e.clientX,
-      start: slider.start,
-      end: slider.end,
+      start: sliderStart,
+      end: sliderEnd,
     };
   };
   const onSliderPointerMove = (e: React.PointerEvent) => {
@@ -210,7 +193,6 @@ export function SittingTimeline(props: SittingTimelineProps) {
       start = newStart;
       end = newStart + width;
     }
-    setSlider({ start, end });
     onSliderChange(start, end);
   };
   const onSliderPointerUp = () => {
@@ -221,14 +203,14 @@ export function SittingTimeline(props: SittingTimelineProps) {
   const SLIDER_HEIGHT = 24;
   const handleW = 12;
   const trackH = 6;
-  const sliderLeft = MARGIN_LEFT + slider.start * INNER_WIDTH;
-  const sliderRight = MARGIN_LEFT + slider.end * INNER_WIDTH;
+  const sliderLeft = MARGIN_LEFT + sliderStart * INNER_WIDTH;
+  const sliderRight = MARGIN_LEFT + sliderEnd * INNER_WIDTH;
   const sliderWidth = sliderRight - sliderLeft;
 
   if (sessions.length === 0) {
     return (
       <div className="flex h-20 items-center justify-center text-sm text-muted-foreground">
-        当天无坐立记录
+        {t("timeline.empty")}
       </div>
     );
   }
@@ -236,13 +218,13 @@ export function SittingTimeline(props: SittingTimelineProps) {
   return (
     <div className="w-full overflow-x-auto">
       <div className="mb-2 text-sm text-gray-700 font-medium">
-        累计坐立时间：{totalHoursText} 小时
+        {t("timeline.total", { hours: totalHoursText })}
       </div>
       <svg
         ref={svgRef}
         viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT + SLIDER_HEIGHT}`}
         className="w-full min-w-150 select-none"
-        aria-label="坐立时间线"
+        aria-label={t("stats.sittingTimeline")}
         onPointerMove={onSliderPointerMove}
         onPointerUp={onSliderPointerUp}
         onPointerLeave={onSliderPointerUp}
@@ -341,7 +323,7 @@ export function SittingTimeline(props: SittingTimelineProps) {
           fill="#3b82f6"
         />
         <text x={MARGIN_LEFT + 16} y={13} fontSize={11} fill="#374151">
-          正常坐立
+          {t("timeline.normal")}
         </text>
         <rect
           x={MARGIN_LEFT + 76}
@@ -352,7 +334,7 @@ export function SittingTimeline(props: SittingTimelineProps) {
           fill="#ef4444"
         />
         <text x={MARGIN_LEFT + 92} y={13} fontSize={11} fill="#374151">
-          久坐（≥{sittingAlertMinutes}分钟）
+          {t("timeline.prolonged", { minutes: sittingAlertMinutes })}
         </text>
 
         {/* 缩放提示已移除，仅用滑块控制 */}

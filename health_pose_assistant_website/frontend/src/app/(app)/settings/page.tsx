@@ -25,6 +25,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { useI18n } from "@/i18n/provider";
 
 type Config = Record<string, unknown>;
 
@@ -36,7 +37,7 @@ interface FieldMeta {
   tab: "common" | "advanced";
 }
 
-const FIELD_META: Record<string, FieldMeta> = {
+const FIELD_META_ZH: Record<string, FieldMeta> = {
   // Common — Feature toggles
   enable_posture: {
     label: "坐姿/驼背检测",
@@ -167,9 +168,136 @@ const FIELD_META: Record<string, FieldMeta> = {
   },
 };
 
+const FIELD_META_EN: Record<string, FieldMeta> = {
+  enable_posture: {
+    label: "Posture / slouch detection",
+    description: "Enable posture and slouch detection",
+    tab: "common",
+  },
+  enable_exercise: {
+    label: "Exercise counting",
+    description:
+      "Enable exercise counting (disable when camera only sees desk view)",
+    tab: "common",
+  },
+  enable_sitting: {
+    label: "Sitting reminder",
+    description: "Enable prolonged sitting reminders",
+    tab: "common",
+  },
+  video_rotation_angle: {
+    label: "Video rotation angle",
+    description: "Camera feed rotation angle",
+    tab: "common",
+  },
+  posture_torso_threshold: {
+    label: "Torso angle threshold (deg)",
+    description: "Torso angle < this value => slouch warning",
+    tab: "common",
+  },
+  posture_head_forward_threshold: {
+    label: "Head-forward threshold",
+    description:
+      "Nose x-offset relative to shoulders > this value => head forward",
+    tab: "common",
+  },
+  posture_alert_seconds: {
+    label: "Bad-posture duration (sec)",
+    description:
+      "Trigger reminder after bad posture continues for this duration",
+    tab: "common",
+  },
+  sitting_alert_minutes: {
+    label: "Sitting reminder minutes",
+    description: "Remind after continuously sitting this many minutes",
+    tab: "common",
+  },
+  sitting_stand_seconds: {
+    label: "Stand confirmation seconds",
+    description: "Stand this long before counting as truly standing",
+    tab: "common",
+  },
+  sitting_repeat_alert_minutes: {
+    label: "Repeat reminder interval (min)",
+    description: "Repeat reminder every N minutes if still sitting",
+    tab: "common",
+  },
+  alert_voice: {
+    label: "Alert voice",
+    description: "TTS voice name",
+    tab: "common",
+  },
+  alert_message: {
+    label: "Sitting alert message",
+    description: "Spoken message for prolonged sitting",
+    tab: "common",
+  },
+  leave_messages: {
+    label: "Away messages",
+    description: "Random messages when user leaves the camera frame",
+    tab: "common",
+  },
+  welcome_back_messages: {
+    label: "Welcome-back messages",
+    description: "Random messages when user returns to the frame",
+    tab: "common",
+  },
+  squat_down_angle: {
+    label: "Squat down angle",
+    description: "Hip-knee-ankle angle < this value => down",
+    tab: "advanced",
+  },
+  squat_up_angle: {
+    label: "Squat up angle",
+    description: "Hip-knee-ankle angle > this value => up",
+    tab: "advanced",
+  },
+  pushup_down_angle: {
+    label: "Push-up down angle",
+    description: "Shoulder-elbow-wrist angle < this value => down",
+    tab: "advanced",
+  },
+  pushup_up_angle: {
+    label: "Push-up up angle",
+    description: "Shoulder-elbow-wrist angle > this value => up",
+    tab: "advanced",
+  },
+  sitting_torso_span_threshold: {
+    label: "Shoulder-hip distance threshold",
+    description: "Shoulder-hip distance < this value => sitting",
+    tab: "advanced",
+  },
+  sitting_hip_y_threshold: {
+    label: "Hip Y threshold",
+    description: "Hip Y > this value => sitting",
+    tab: "advanced",
+  },
+  sitting_knee_angle_threshold: {
+    label: "Knee angle threshold",
+    description: "Knee angle < this value => sitting (when legs visible)",
+    tab: "advanced",
+  },
+  sitting_torso_lean_threshold: {
+    label: "Torso lean threshold",
+    description: "Torso lean angle < this value => obvious forward lean",
+    tab: "advanced",
+  },
+  sitting_knee_straight_threshold: {
+    label: "Knee straight threshold",
+    description: "Knee angle > this value => leg straight",
+    tab: "advanced",
+  },
+  sitting_frame_smoothing: {
+    label: "Frame smoothing",
+    description: "Require N consecutive frames before switching state",
+    tab: "advanced",
+  },
+};
+
 // ── Component ──
 
 export default function SettingsPage() {
+  const { t, locale, languageTag } = useI18n();
   const [profile, setProfile] = useState<ConfigProfile | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
   const [loading, setLoading] = useState(true);
@@ -226,7 +354,7 @@ export default function SettingsPage() {
       setProfile(p);
       setConfig({ ...(DEFAULT_CONFIG as Config), ...p.config_json });
       setDirty(false);
-      setSuccessMsg(`已保存 (version ${p.version})`);
+      setSuccessMsg(t("settings.saved", { version: p.version }));
     } catch (e: unknown) {
       setError(String(e));
     } finally {
@@ -243,7 +371,7 @@ export default function SettingsPage() {
       setConfig({ ...p.config_json });
       setNoConfig(false);
       setDirty(false);
-      setSuccessMsg("已创建默认配置");
+      setSuccessMsg(t("settings.createSuccess"));
     } catch (e: unknown) {
       setError(String(e));
     } finally {
@@ -256,8 +384,8 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <div>
-        <h1 className="text-2xl font-bold mb-4">Settings</h1>
-        <p className="text-muted-foreground">Loading...</p>
+        <h1 className="text-2xl font-bold mb-4">{t("settings.title")}</h1>
+        <p className="text-muted-foreground">{t("common.loading")}</p>
       </div>
     );
   }
@@ -267,18 +395,16 @@ export default function SettingsPage() {
   if (noConfig) {
     return (
       <div>
-        <h1 className="text-2xl font-bold mb-4">Settings</h1>
+        <h1 className="text-2xl font-bold mb-4">{t("settings.title")}</h1>
         <Card className="max-w-md">
           <CardHeader>
-            <CardTitle>暂无配置</CardTitle>
-            <CardDescription>
-              还没有创建配置档案。点击下方按钮用 pose-video 默认值初始化。
-            </CardDescription>
+            <CardTitle>{t("settings.noConfigTitle")}</CardTitle>
+            <CardDescription>{t("settings.noConfigDesc")}</CardDescription>
           </CardHeader>
           <CardContent>
             {error && <p className="text-sm text-destructive mb-3">{error}</p>}
             <Button onClick={handleCreateDefault} disabled={saving}>
-              {saving ? "创建中..." : "使用默认配置初始化"}
+              {saving ? t("settings.creating") : t("settings.createDefault")}
             </Button>
           </CardContent>
         </Card>
@@ -289,9 +415,10 @@ export default function SettingsPage() {
   if (!config) return null;
 
   // ── Render helpers ──
+  const fieldMeta = locale === "zh" ? FIELD_META_ZH : FIELD_META_EN;
 
   function renderField(key: string) {
-    const meta = FIELD_META[key];
+    const meta = fieldMeta[key];
     if (!meta) return null;
     const value = config![key];
 
@@ -362,7 +489,7 @@ export default function SettingsPage() {
                   }}
                   className="text-destructive hover:text-destructive shrink-0"
                 >
-                  删除
+                  {t("settings.remove")}
                 </Button>
               </div>
             ))}
@@ -372,7 +499,7 @@ export default function SettingsPage() {
             size="sm"
             onClick={() => updateField(key, [...(value as string[]), ""])}
           >
-            + 添加消息
+            {t("settings.addMessage")}
           </Button>
         </div>
       );
@@ -432,11 +559,12 @@ export default function SettingsPage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h1 className="text-2xl font-bold">Settings</h1>
+          <h1 className="text-2xl font-bold">{t("settings.title")}</h1>
           {profile && (
             <p className="text-sm text-muted-foreground mt-1">
-              Version {profile.version} · 最后更新{" "}
-              {new Date(profile.updated_at).toLocaleString("zh-CN")}
+              {t("common.version")} {profile.version} ·{" "}
+              {t("common.lastUpdated")}{" "}
+              {new Date(profile.updated_at).toLocaleString(languageTag)}
             </p>
           )}
         </div>
@@ -448,22 +576,24 @@ export default function SettingsPage() {
           )}
           {error && <Badge variant="destructive">{error}</Badge>}
           <Button onClick={handleSave} disabled={saving || !dirty}>
-            {saving ? "保存中..." : "保存配置"}
+            {saving ? t("settings.saving") : t("settings.saveConfig")}
           </Button>
         </div>
       </div>
 
       <Tabs defaultValue="common">
         <TabsList>
-          <TabsTrigger value="common">常用设置</TabsTrigger>
-          <TabsTrigger value="advanced">高级阈值</TabsTrigger>
+          <TabsTrigger value="common">{t("settings.tabCommon")}</TabsTrigger>
+          <TabsTrigger value="advanced">
+            {t("settings.tabAdvanced")}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="common" className="mt-4">
           <Card>
             <CardContent className="pt-6">
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                功能开关
+                {t("settings.sectionFeature")}
               </h3>
               {["enable_posture", "enable_exercise", "enable_sitting"].map(
                 renderField,
@@ -471,13 +601,13 @@ export default function SettingsPage() {
               <Separator className="my-4" />
 
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                视频
+                {t("settings.sectionVideo")}
               </h3>
               {renderField("video_rotation_angle")}
               <Separator className="my-4" />
 
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                坐姿检测
+                {t("settings.sectionPosture")}
               </h3>
               {[
                 "posture_torso_threshold",
@@ -487,7 +617,7 @@ export default function SettingsPage() {
               <Separator className="my-4" />
 
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                久坐提醒
+                {t("settings.sectionSitting")}
               </h3>
               {[
                 "sitting_alert_minutes",
@@ -497,13 +627,13 @@ export default function SettingsPage() {
               <Separator className="my-4" />
 
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                语音提醒
+                {t("settings.sectionVoice")}
               </h3>
               {["alert_voice", "alert_message"].map(renderField)}
               <Separator className="my-4" />
 
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                消息列表
+                {t("settings.sectionMessages")}
               </h3>
               {["leave_messages", "welcome_back_messages"].map(renderField)}
             </CardContent>
@@ -514,7 +644,7 @@ export default function SettingsPage() {
           <Card>
             <CardContent className="pt-6">
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                运动计数阈值
+                {t("settings.sectionExerciseThreshold")}
               </h3>
               {[
                 "squat_down_angle",
@@ -525,7 +655,7 @@ export default function SettingsPage() {
               <Separator className="my-4" />
 
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                坐/站判断阈值
+                {t("settings.sectionSittingThreshold")}
               </h3>
               {[
                 "sitting_torso_span_threshold",

@@ -4,17 +4,20 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { logout } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { useI18n } from "@/i18n/provider";
+import { LanguageSwitcher } from "@/components/language-switcher";
 
 const navItems = [
-  { href: "/dashboard", label: "仪表盘" },
-  { href: "/devices", label: "设备管理" },
-  { href: "/settings", label: "配置" },
-  { href: "/stats", label: "统计" },
+  { href: "/dashboard", key: "nav.dashboard" },
+  { href: "/devices", key: "nav.devices" },
+  { href: "/settings", key: "nav.settings" },
+  { href: "/stats", key: "nav.stats" },
 ];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const { t } = useI18n();
 
   async function handleLogout() {
     await logout();
@@ -37,13 +40,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                     : "text-muted-foreground"
                 }`}
               >
-                {item.label}
+                {t(item.key)}
               </Link>
             ))}
           </nav>
-          <Button variant="ghost" size="sm" onClick={handleLogout}>
-            退出登录
-          </Button>
+          <div className="flex items-center gap-2">
+            <LanguageSwitcher />
+            <Button variant="ghost" size="sm" onClick={handleLogout}>
+              {t("nav.logout")}
+            </Button>
+          </div>
         </div>
       </header>
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6">

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { format, subDays } from "date-fns";
-import { zhCN } from "date-fns/locale";
+import { useSearchParams } from "next/navigation";
 import {
   LineChart,
   Line,
@@ -43,6 +43,7 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import { toast } from "sonner";
 import { SittingTimeline } from "@/components/sitting-timeline";
+import { useI18n } from "@/i18n/provider";
 
 const CHART_COLORS = {
   bad_posture_count: "#ef4444",
@@ -51,17 +52,8 @@ const CHART_COLORS = {
   away_count: "#22c55e",
 };
 
-const CHART_LABELS: Record<string, string> = {
-  bad_posture_count: "不良姿势次数",
-  prolonged_alert_count: "久坐提醒次数",
-  sitting_minutes: "久坐分钟数",
-  away_count: "离开次数",
-};
-
-import { Suspense } from "react";
-import { useSearchParams } from "next/navigation";
-
 function StatsPageInner() {
+  const { t, dateFnsLocale } = useI18n();
   const searchParams = useSearchParams();
   const [devices, setDevices] = useState<Device[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("all");
@@ -93,8 +85,8 @@ function StatsPageInner() {
   useEffect(() => {
     listDevices()
       .then(setDevices)
-      .catch(() => toast.error("加载设备列表失败"));
-  }, []);
+      .catch(() => toast.error(t("stats.loadDeviceFailed")));
+  }, [t]);
 
   useEffect(() => {
     async function fetch() {
@@ -116,13 +108,13 @@ function StatsPageInner() {
         const data = await getStats(params);
         setStats(data);
       } catch {
-        toast.error("加载统计数据失败");
+        toast.error(t("stats.loadStatsFailed"));
       } finally {
         setLoading(false);
       }
     }
     fetch();
-  }, [selectedDeviceId, fromDate, toDate]);
+  }, [selectedDeviceId, fromDate, toDate, t]);
 
   // Fetch sitting sessions for timeline
   useEffect(() => {
@@ -141,13 +133,23 @@ function StatsPageInner() {
         setSittingAlertMinutes(data.sitting_alert_minutes);
         setDeviceStatusSpans(data.device_status_spans || []);
       } catch {
-        toast.error("加载坐立时间线失败");
+        toast.error(t("stats.loadTimelineFailed"));
       } finally {
         setSessionsLoading(false);
       }
     }
     fetchSessions();
-  }, [selectedDeviceId, sessionsDate]);
+  }, [selectedDeviceId, sessionsDate, t]);
+
+  const chartLabels: Record<string, string> = useMemo(
+    () => ({
+      bad_posture_count: t("stats.badPostureCount"),
+      prolonged_alert_count: t("stats.prolongedAlertCount"),
+      sitting_minutes: t("stats.sittingMinutes"),
+      away_count: t("stats.awayCount"),
+    }),
+    [t],
+  );
 
   // Aggregate by date when "all" devices selected
   const chartData = useMemo(() => {
@@ -185,20 +187,20 @@ function StatsPageInner() {
 
   return (
     <div>
-      <h1 className="mb-6 text-2xl font-bold">统计数据</h1>
+      <h1 className="mb-6 text-2xl font-bold">{t("stats.title")}</h1>
 
       {/* Filters */}
       <div className="mb-6 flex flex-wrap items-end gap-4">
         <div className="grid gap-1.5">
-          <label className="text-sm font-medium">设备</label>
+          <label className="text-sm font-medium">{t("stats.device")}</label>
           <Select
             value={selectedDeviceId}
             onValueChange={(v) => setSelectedDeviceId(v ?? "all")}
           >
             <SelectTrigger className="w-50">
-              <SelectValue placeholder="全部设备">
+              <SelectValue placeholder={t("stats.allDevices")}>
                 {selectedDeviceId === "all"
-                  ? "全部设备"
+                  ? t("stats.allDevices")
                   : (() => {
                       const d = devices.find(
                         (d) => String(d.id) === selectedDeviceId,
@@ -210,7 +212,7 @@ function StatsPageInner() {
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">全部设备</SelectItem>
+              <SelectItem value="all">{t("stats.allDevices")}</SelectItem>
               {devices.map((d) => (
                 <SelectItem key={d.id} value={String(d.id)}>
                   {d.name} ({d.device_code})
@@ -221,7 +223,7 @@ function StatsPageInner() {
         </div>
 
         <div className="grid gap-1.5">
-          <label className="text-sm font-medium">开始日期</label>
+          <label className="text-sm font-medium">{t("stats.startDate")}</label>
           <Popover>
             <PopoverTrigger className="inline-flex h-9 w-40 items-center justify-start rounded-md border border-input bg-background px-3 text-sm ring-offset-background hover:bg-accent hover:text-accent-foreground">
               {format(fromDate, "yyyy-MM-dd")}
@@ -229,7 +231,7 @@ function StatsPageInner() {
             <PopoverContent className="w-auto p-0">
               <Calendar
                 mode="single"
-                locale={zhCN}
+                locale={dateFnsLocale}
                 selected={fromDate}
                 onSelect={(d) => d && setFromDate(d)}
               />
@@ -238,7 +240,7 @@ function StatsPageInner() {
         </div>
 
         <div className="grid gap-1.5">
-          <label className="text-sm font-medium">结束日期</label>
+          <label className="text-sm font-medium">{t("stats.endDate")}</label>
           <Popover>
             <PopoverTrigger className="inline-flex h-9 w-40 items-center justify-start rounded-md border border-input bg-background px-3 text-sm ring-offset-background hover:bg-accent hover:text-accent-foreground">
               {format(toDate, "yyyy-MM-dd")}
@@ -246,7 +248,7 @@ function StatsPageInner() {
             <PopoverContent className="w-auto p-0">
               <Calendar
                 mode="single"
-                locale={zhCN}
+                locale={dateFnsLocale}
                 selected={toDate}
                 onSelect={(d) => d && setToDate(d)}
               />
@@ -259,7 +261,9 @@ function StatsPageInner() {
       <Card className="mb-6">
         <CardHeader>
           <div className="flex flex-wrap items-center gap-4">
-            <CardTitle className="text-base">坐立时间线</CardTitle>
+            <CardTitle className="text-base">
+              {t("stats.sittingTimeline")}
+            </CardTitle>
             <Popover>
               <PopoverTrigger className="inline-flex h-9 w-40 items-center justify-start rounded-md border border-input bg-background px-3 text-sm ring-offset-background hover:bg-accent hover:text-accent-foreground">
                 {format(sessionsDate, "yyyy-MM-dd")}
@@ -267,7 +271,7 @@ function StatsPageInner() {
               <PopoverContent className="w-auto p-0">
                 <Calendar
                   mode="single"
-                  locale={zhCN}
+                  locale={dateFnsLocale}
                   selected={sessionsDate}
                   onSelect={(d) => d && setSessionsDate(d)}
                 />
@@ -277,7 +281,9 @@ function StatsPageInner() {
         </CardHeader>
         <CardContent>
           {sessionsLoading ? (
-            <p className="text-sm text-muted-foreground">加载中…</p>
+            <p className="text-sm text-muted-foreground">
+              {t("common.loading")}
+            </p>
           ) : (
             <SittingTimeline
               sessions={sessions}
@@ -296,16 +302,16 @@ function StatsPageInner() {
       </Card>
 
       {loading ? (
-        <p className="text-muted-foreground">加载中…</p>
+        <p className="text-muted-foreground">{t("common.loading")}</p>
       ) : chartData.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
-            所选范围内无数据
+            {t("stats.noData")}
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-6 md:grid-cols-2">
-          {(Object.keys(CHART_LABELS) as Array<keyof typeof CHART_LABELS>).map(
+          {(Object.keys(chartLabels) as Array<keyof typeof chartLabels>).map(
             (key) => {
               // Dot plot for 不良姿势次数、久坐提醒次数、离开次数
               if (
@@ -317,7 +323,7 @@ function StatsPageInner() {
                   <Card key={key}>
                     <CardHeader>
                       <CardTitle className="text-base">
-                        {CHART_LABELS[key]}
+                        {chartLabels[key]}
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
@@ -332,14 +338,14 @@ function StatsPageInner() {
                           <YAxis tick={{ fontSize: 12 }} />
                           <Tooltip
                             labelFormatter={(label) =>
-                              format(new Date(String(label)), "yyyy年M月d日", {
-                                locale: zhCN,
+                              format(new Date(String(label)), "PP", {
+                                locale: dateFnsLocale,
                               })
                             }
                           />
                           <Legend />
                           <Scatter
-                            name={CHART_LABELS[key]}
+                            name={chartLabels[key]}
                             dataKey={key}
                             fill={
                               CHART_COLORS[key as keyof typeof CHART_COLORS]
@@ -358,7 +364,7 @@ function StatsPageInner() {
                   <Card key={key}>
                     <CardHeader>
                       <CardTitle className="text-base">
-                        {CHART_LABELS[key]}
+                        {chartLabels[key]}
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
@@ -373,15 +379,15 @@ function StatsPageInner() {
                           <YAxis tick={{ fontSize: 12 }} />
                           <Tooltip
                             labelFormatter={(label) =>
-                              format(new Date(String(label)), "yyyy年M月d日", {
-                                locale: zhCN,
+                              format(new Date(String(label)), "PP", {
+                                locale: dateFnsLocale,
                               })
                             }
                           />
                           <Legend />
                           <Bar
                             dataKey={key}
-                            name={CHART_LABELS[key]}
+                            name={chartLabels[key]}
                             fill={
                               CHART_COLORS[key as keyof typeof CHART_COLORS]
                             }
@@ -397,7 +403,7 @@ function StatsPageInner() {
                 <Card key={key}>
                   <CardHeader>
                     <CardTitle className="text-base">
-                      {CHART_LABELS[key]}
+                      {chartLabels[key]}
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -412,8 +418,8 @@ function StatsPageInner() {
                         <YAxis tick={{ fontSize: 12 }} />
                         <Tooltip
                           labelFormatter={(label) =>
-                            format(new Date(String(label)), "yyyy年M月d日", {
-                              locale: zhCN,
+                            format(new Date(String(label)), "PP", {
+                              locale: dateFnsLocale,
                             })
                           }
                         />
@@ -421,7 +427,7 @@ function StatsPageInner() {
                         <Line
                           type="monotone"
                           dataKey={key}
-                          name={CHART_LABELS[key]}
+                          name={chartLabels[key]}
                           stroke={
                             CHART_COLORS[key as keyof typeof CHART_COLORS]
                           }
@@ -443,7 +449,7 @@ function StatsPageInner() {
 
 export default function StatsPage() {
   return (
-    <Suspense fallback={<div>加载中…</div>}>
+    <Suspense fallback={<div>Loading...</div>}>
       <StatsPageInner />
     </Suspense>
   );
