@@ -1,8 +1,8 @@
 """Seed an admin user into the database."""
 
 import argparse
-import sys
 import os
+import sys
 
 # Allow running from project root or scripts/ dir
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
@@ -15,7 +15,7 @@ from app.models import User
 def main():
     parser = argparse.ArgumentParser(description="Seed admin user")
     parser.add_argument("--email", default="admin@example.com")
-    parser.add_argument("--password", default="admin123")
+    parser.add_argument("--password", required=True)
     args = parser.parse_args()
 
     db = next(get_db())

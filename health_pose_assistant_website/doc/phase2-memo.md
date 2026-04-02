@@ -204,5 +204,5 @@ npm run dev      # http://localhost:3000
 
 # 登录
 # 浏览器访问 http://localhost:3000/login
-# 账号: admin@example.com / admin123
+# 账号: admin@example.com / 本地自定义密码
 ```

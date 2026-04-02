@@ -16,9 +16,9 @@ REQUIRED_NODE_MAJOR=22
 
 DB_NAME="${HPA_DB_NAME:-health_pose_assistant}"
 DB_USER="${HPA_DB_USER:-hva_user}"
-DB_PASS="${HPA_DB_PASS:-hva_dev_pass123}"
 ADMIN_EMAIL="${HPA_ADMIN_EMAIL:-admin@example.com}"
-ADMIN_PASS="${HPA_ADMIN_PASS:-admin123}"
+DB_PASS="${HPA_DB_PASS:-$(openssl rand -hex 16)}"
+ADMIN_PASS="${HPA_ADMIN_PASS:-$(openssl rand -hex 12)}"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -148,8 +148,8 @@ setup_env() {
     if [[ ! -f "$BACKEND_DIR/.env" ]]; then
         info "Creating .env from .env.example..."
         sed \
-            -e "s|postgresql://hva_user:changeme@localhost/health_pose_assistant|postgresql://$DB_USER:$DB_PASS@localhost/$DB_NAME|" \
-            -e "s|changeme-secret-key|$(openssl rand -hex 32)|" \
+            -e "s|postgresql://hpa_user@localhost/health_pose_assistant|postgresql://$DB_USER:$DB_PASS@localhost/$DB_NAME|" \
+            -e "s|set-a-local-secret-key|$(openssl rand -hex 32)|" \
             "$BACKEND_DIR/.env.example" > "$BACKEND_DIR/.env"
         info ".env created."
     else
@@ -216,6 +216,12 @@ main() {
     echo "    cd $FRONTEND_DIR"
     echo "    nvm use   # auto-loads Node version from .nvmrc"
     echo "    npm run dev"
+    echo ""
+    echo "  Generated local credentials:"
+    echo "    DB user: $DB_USER"
+    echo "    DB password: $DB_PASS"
+    echo "    Admin email: $ADMIN_EMAIL"
+    echo "    Admin password: $ADMIN_PASS"
     echo ""
 }
 

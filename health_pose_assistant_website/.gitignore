@@ -1,1 +1,4 @@
 backend/hpa_backend_env/
+.env
+.env.*
+!.env.example

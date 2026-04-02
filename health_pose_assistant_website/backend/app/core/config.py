@@ -6,14 +6,14 @@ import os
 
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = "postgresql://hpa_user:changeme@localhost/health_pose_assistant"
-    SECRET_KEY: str = "changeme-secret-key"
+    DATABASE_URL: str = "postgresql://hpa_user@localhost/health_pose_assistant"
+    SECRET_KEY: str = "set-me-in-env"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     FRONTEND_URL: str = "http://localhost:3000"
 
-    # 优先级：环境变量 > .env.docker > .env
-    model_config = {"env_file": [".env.docker", ".env"]}
+    # 优先级：环境变量 > .env
+    model_config = {"env_file": [".env"]}
 
     def __init__(self, **values):
         # 优先用环境变量覆盖

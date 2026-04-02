@@ -18,6 +18,8 @@ This installs PostgreSQL, creates the database/user, sets up the Python venv, ru
 
 ## Manual Setup
 
+For Docker Compose, create a root `.env` from `.env.example` before starting containers.
+
 ### 1. Install & Start PostgreSQL
 
 ```bash
@@ -35,7 +37,7 @@ sudo systemctl enable --now postgresql
 ```bash
 # macOS (current OS user is superuser by default)
 createdb health_pose_assistant
-psql health_pose_assistant -c "CREATE USER hva_user WITH PASSWORD 'hva_dev_pass123';"
+psql health_pose_assistant -c "CREATE USER hva_user WITH PASSWORD '<set-a-local-password>';"
 psql health_pose_assistant -c "GRANT ALL PRIVILEGES ON DATABASE health_pose_assistant TO hva_user;"
 psql health_pose_assistant -c "GRANT ALL ON SCHEMA public TO hva_user;"
 
@@ -58,8 +60,15 @@ pip install -r requirements.txt
 ### 4. Configure Environment
 
 ```bash
+cp backend/.env.example backend/.env
+# Edit backend/.env — set DATABASE_URL, SECRET_KEY, etc.
+```
+
+### 4a. Configure Docker Compose
+
+```bash
 cp .env.example .env
-# Edit .env — set DATABASE_URL, SECRET_KEY, etc.
+# Edit .env — set POSTGRES_PASSWORD, BACKEND_SECRET_KEY, and related values.
 ```
 
 ### 5. Run Migrations
@@ -71,7 +80,7 @@ alembic upgrade head
 ### 6. Seed Admin User
 
 ```bash
-python ../scripts/seed_admin.py --email admin@example.com --password admin123
+python ../scripts/seed_admin.py --email admin@example.com --password <set-a-local-password>
 ```
 
 ## Running the Server

@@ -1,10 +1,17 @@
 """Quick smoke test for all Phase 1 endpoints."""
 
 import json
+import os
 import urllib.request
 import urllib.error
 
 BASE = "http://localhost:8001"
+ADMIN_PASSWORD = os.environ.get("HPA_ADMIN_PASS")
+
+
+def require_admin_password():
+    if not ADMIN_PASSWORD:
+        raise RuntimeError("Set HPA_ADMIN_PASS before running this smoke test.")
 
 
 def req(method, path, data=None, headers=None):
@@ -22,6 +29,7 @@ def req(method, path, data=None, headers=None):
 
 
 def test():
+    require_admin_password()
     print("=" * 60)
     print("Phase 1 Endpoint Smoke Test")
     print("=" * 60)
@@ -35,7 +43,7 @@ def test():
     status, body = req(
         "POST",
         "/api/v1/auth/login",
-        {"email": "admin@example.com", "password": "admin123"},
+        {"email": "admin@example.com", "password": ADMIN_PASSWORD},
     )
     print(
         f"[{status}] POST /api/v1/auth/login -> token={body.get('access_token', '')[:20]}..."

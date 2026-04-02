@@ -12,7 +12,7 @@
 
 - 通过 Homebrew 安装 PostgreSQL 16
 - 创建数据库 `health_pose_assistant`（开发）和 `health_pose_assistant_test`（测试）
-- 创建用户 `hva_user`，密码 `hva_dev_pass123`
+- 创建用户 `hva_user`，密码为本地自定义值
 
 ### 2. 7 张 ORM 表
 

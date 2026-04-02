@@ -6,8 +6,11 @@ services:
       context: ./backend
       dockerfile: ../Dockerfile.backend
     container_name: hpa_backend
-    env_file:
-      - backend/.env.docker
+    environment:
+      DATABASE_URL: ${BACKEND_DATABASE_URL:?set BACKEND_DATABASE_URL in .env}
+      SECRET_KEY: ${BACKEND_SECRET_KEY:?set BACKEND_SECRET_KEY in .env}
+      ALGORITHM: ${BACKEND_ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
     ports:
       - "8000:8000"
     depends_on:
@@ -31,9 +34,9 @@ services:
     image: postgres:15
     container_name: hpa_postgres
     environment:
-      POSTGRES_DB: health_pose_assistant
-      POSTGRES_USER: hpa_user
-      POSTGRES_PASSWORD: hpa_pass
+      POSTGRES_DB: ${POSTGRES_DB:-health_pose_assistant}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     ports:
       - "5432:5432"
     volumes:

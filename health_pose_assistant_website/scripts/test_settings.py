@@ -1,10 +1,12 @@
 """Quick smoke test for Settings page API flow via Next.js proxy."""
 
-import urllib.request
 import json
 import http.cookiejar
+import os
+import urllib.request
 
 BASE = "http://localhost:3000"
+ADMIN_PASSWORD = os.environ.get("HPA_ADMIN_PASS")
 
 cj = http.cookiejar.CookieJar()
 opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
@@ -23,9 +25,15 @@ def api(method, path, body=None):
         return e.code, json.loads(e.read().decode())
 
 
+if not ADMIN_PASSWORD:
+    raise RuntimeError("Set HPA_ADMIN_PASS before running this smoke test.")
+
+
 # 1. Login
 status, data = api(
-    "POST", "/api/auth/login", {"email": "admin@example.com", "password": "admin123"}
+    "POST",
+    "/api/auth/login",
+    {"email": "admin@example.com", "password": ADMIN_PASSWORD},
 )
 print(f"1. Login: {status} -> {data}")
 assert status == 200

@@ -1,7 +1,7 @@
 services:
   backend:
     environment:
-      - DATABASE_URL=${HOST_DATABASE_URL:-postgresql://hpa_user:hpa_pass@host.docker.internal:5432/health_pose_assistant}
+      - DATABASE_URL=${HOST_DATABASE_URL:?set HOST_DATABASE_URL in .env}
       - DB_HOST=${HOST_DB_HOST:-host.docker.internal}
       - DB_PORT=${HOST_DB_PORT:-5432}
     extra_hosts:
