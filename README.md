@@ -1,53 +1,97 @@
 # Health Video Assistant
 
-A full-stack project for posture and sedentary-health assistance:
-- Edge-side (camera / Raspberry Pi) real-time posture detection and sedentary reminders
-- Web admin platform for device management, configuration delivery, and analytics
-- Backend APIs for unified event and heartbeat ingestion
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](#tech-stack)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi&logoColor=white)](#tech-stack)
+[![Next.js](https://img.shields.io/badge/Next.js-Frontend-000000?logo=next.js&logoColor=white)](#tech-stack)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-4169E1?logo=postgresql&logoColor=white)](#tech-stack)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](#run-modes)
 
-中文: [README_zh.md](README_zh.md)
+Health Video Assistant is a full-stack system for posture and sedentary-health assistance:
+- Real-time posture analysis on edge devices (camera / Raspberry Pi stream)
+- A web admin platform for device management, config delivery, and analytics
+- Backend APIs for event ingestion, heartbeats, and centralized configuration
 
-## Table of Contents
+Chinese version: [README_zh.md](README_zh.md)
 
-- [Highlights](#highlights)
-- [Tech Stack](#tech-stack)
-- [Repository Structure](#repository-structure)
-- [Quick Start](#quick-start)
-- [Run Modes](#run-modes)
-- [Development Notes](#development-notes)
-- [Roadmap](#roadmap)
+## Why This Project
 
-## Highlights
+Many people sit for long hours without noticing posture degradation. This project focuses on a practical loop:
+1. Detect posture problems in real time on the edge client.
+2. Trigger reminders and collect posture events.
+3. Analyze trends in a web dashboard and tune device behavior via config.
 
-- Real-time posture detection: sitting/slouching recognition with sedentary reminders
-- Edge-cloud decoupling: edge client can run locally or connect to backend config/event reporting
-- Hot config updates: backend configuration can be polled and applied at runtime
-- Admin console: device management, config management, and analytics
+## Key Features
+
+- Real-time sitting/slouching detection with sedentary reminders
+- Edge-cloud decoupling: offline/local mode and connected mode both supported
+- Runtime config sync from backend (no edge restart required)
+- Device heartbeat and event reporting pipeline
+- Admin portal for devices, profile settings, and statistics
+
+## System Architecture
+
+```text
+Raspberry Pi / Camera
+  |
+  | TCP stream
+  v
+pose-video (MediaPipe/OpenCV)
+  |
+  | REST: config pull + events + heartbeat
+  v
+FastAPI backend + PostgreSQL
+  |
+  | API
+  v
+Next.js admin dashboard
+```
+
+```mermaid
+flowchart LR
+  A[Raspberry Pi / Camera] -->|TCP Stream| B[pose-video<br/>MediaPipe + OpenCV]
+  B -->|GET /api/v1/device/config| C[FastAPI Backend]
+  B -->|POST /api/v1/device/events| C
+  B -->|POST /api/v1/device/heartbeat| C
+  C --> D[(PostgreSQL)]
+  E[Next.js Admin Dashboard] -->|JWT Admin APIs| C
+  C -->|Config Version + JSON| B
+```
+
+## Screenshots
+
+The gallery below is wired for real project screenshots. Place your images at these paths and they will render automatically on GitHub:
+
+| Page | Preview |
+|---|---|
+| Dashboard / Stats | ![Stats Page](docs/screenshots/stats-page.png) |
+| Edge Pose Detection | ![Pose Detection Screen](docs/screenshots/pose-detection.png) |
+| Settings / Parameters | ![Settings Page](docs/screenshots/settings-parameters.png) |
+| Device Management | ![Device Management Page](docs/screenshots/devices-page.png) |
 
 ## Tech Stack
 
-### Edge / CV (`pose-video`)
+### Edge CV (pose-video)
 
 - Python 3.11+
 - OpenCV, MediaPipe, NumPy, Pillow
-- Optional: TensorFlow Lite (MoveNet-related scripts)
+- Optional TensorFlow Lite (MoveNet-related scripts)
 
-### Website / Platform (`health_pose_assistant_website`)
+### Platform (health_pose_assistant_website)
 
-- Backend: FastAPI + SQLAlchemy + Alembic + PostgreSQL
-- Frontend: Next.js (App Router) + React + TypeScript + Tailwind
-- DevOps: Docker Compose
+- Backend: FastAPI, SQLAlchemy, Alembic, PostgreSQL
+- Frontend: Next.js (App Router), React, TypeScript, Tailwind
+- Dev setup: Docker Compose + local scripts
 
 ## Repository Structure
 
 ```text
 health-video-assistant/
-├── pose-video/                      # Edge CV app (Mac / Pi stream / local camera)
-│   ├── pose_detect_mediapipe.py     # Main entry: detection + alerts + optional backend reporting
-│   ├── config_client.py             # Config polling + event reporting client
-│   ├── video_on_pi/pi_stream.py     # Pi-side video streaming script
+├── pose-video/
+│   ├── pose_detect_mediapipe.py
+│   ├── config_client.py
+│   ├── video_on_pi/pi_stream.py
 │   └── requirements.txt
-└── health_pose_assistant_website/   # Web platform (frontend + backend + DB)
+└── health_pose_assistant_website/
     ├── backend/
     ├── frontend/
     ├── scripts/
@@ -57,7 +101,7 @@ health-video-assistant/
 
 ## Quick Start
 
-### 1) Start the web platform (recommended first)
+### 1) Start the web platform first
 
 ```bash
 cd health_pose_assistant_website
@@ -65,12 +109,12 @@ bash scripts/setup_dev.sh
 ./start_dev_backend.sh
 ```
 
-Default endpoints:
+Default URLs:
 - Frontend: http://localhost:3000
 - Backend: http://localhost:8000
-- API Docs: http://localhost:8000/docs
+- API docs: http://localhost:8000/docs
 
-### 2) Start the posture detection client
+### 2) Start the edge posture client
 
 ```bash
 cd pose-video
@@ -78,14 +122,14 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# Local camera debug
+# Local camera mode
 python3 pose_detect_mediapipe.py --source 0
 
-# Wait for Pi stream (default TCP 9999)
+# Pi streaming mode (default TCP 9999)
 python3 pose_detect_mediapipe.py
 ```
 
-### 3) Connect to backend (optional)
+### 3) Connect edge client to backend (optional)
 
 ```bash
 python3 pose_detect_mediapipe.py \
@@ -93,42 +137,53 @@ python3 pose_detect_mediapipe.py \
   --device-token <YOUR_DEVICE_TOKEN>
 ```
 
-When connected, these features are enabled:
-- Config polling (default every 10s)
-- Event reporting and heartbeat
+Connected mode enables:
+- Config polling (default every 10 seconds)
+- Event upload + heartbeat
 - Optional MJPEG output (default port 8080)
 
 ## Run Modes
 
-### Local development mode
+### Local development
 
-- Web platform with host PostgreSQL + Python venv + Node.js
-- Best for API/frontend/algorithm integration debugging
+- Host PostgreSQL + Python venv + Node.js workflow
+- Best for fast iteration and algorithm/backend/frontend integration
 
-### Docker Compose mode (Web)
+### Docker Compose (web platform)
 
-From the `health_pose_assistant_website` directory:
+Run from health_pose_assistant_website:
 
 ```bash
 cp .env.example .env
 cp frontend/.env.example frontend/.env  # if present
-
 docker compose up --build
 ```
 
+## Demo Checklist
+
+For a clean demo flow on GitHub or in a meeting:
+1. Register a device in admin panel and get device token.
+2. Run edge client with api-url + device-token.
+3. Trigger posture events by simulating sitting/slouching.
+4. Verify events and trends in admin stats page.
+
 ## Development Notes
 
-- Validate the minimum pipeline first: `device registration -> device token -> edge event reporting -> dashboard visibility`
-- Start with default edge parameters, then calibrate from backend config
-- Keep event model compatibility when adding new detections to preserve analytics continuity
+- Validate this path first: device registration -> token -> edge reporting -> dashboard visibility
+- Start with default thresholds; calibrate by backend config after initial baseline
+- Keep event schema backward-compatible when adding new detection logic
 
 ## Roadmap
 
-- [ ] 更完善的姿态类别与动作识别
-- [ ] 更细粒度的统计看板与趋势分析
-- [ ] 多设备与多用户协同管理
-- [ ] 生产环境部署脚本与监控告警完善
+- [ ] Expand posture and activity categories
+- [ ] Improve analytics granularity and trend exploration
+- [ ] Add multi-user and multi-device team management
+- [ ] Harden production deployment and monitoring workflows
+
+## Contributing
+
+Contributions are welcome. Open an issue first for major changes so implementation direction can be aligned.
 
 ## License
 
-No license is declared yet. If you plan to open source this repository, add a `LICENSE` file (for example, MIT).
+No license is declared yet. If open-sourcing, add a LICENSE file (for example, MIT).
