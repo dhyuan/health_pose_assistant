@@ -47,9 +47,9 @@ cd "$BACKEND_DIR"
 BACKEND_PID=$!
 
 # --- Start frontend ---
-echo -e "${GREEN}[INFO]${NC} Starting frontend (next dev) on :3000 ..."
+echo -e "${GREEN}[INFO]${NC} Starting frontend (next dev) on 0.0.0.0:3000 ..."
 cd "$FRONTEND_DIR"
-npm run dev &
+npm run dev -- --hostname 0.0.0.0 --port 3000 &
 FRONTEND_PID=$!
 
 trap cleanup EXIT INT TERM
@@ -58,6 +58,7 @@ echo ""
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}  Backend:  http://localhost:8000${NC}"
 echo -e "${GREEN}  Frontend: http://localhost:3000${NC}"
+echo -e "${GREEN}  Frontend(LAN): http://100.87.10.116:3000${NC}"
 echo -e "${GREEN}  Press Ctrl+C to stop both${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
