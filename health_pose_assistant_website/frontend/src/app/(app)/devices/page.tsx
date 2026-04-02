@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type TouchEvent as ReactTouchEvent,
+} from "react";
 import {
   Device,
   listDevices,
@@ -476,66 +482,203 @@ function VideoWindow({
   const DEFAULT_H = 520;
   const MIN_W = 320;
   const MIN_H = 280;
+  const MOBILE_MIN_W = 240;
+  const MOBILE_BREAKPOINT = 768;
+
+  const isMobileViewport = () => window.innerWidth <= MOBILE_BREAKPOINT;
+  const centerMobilePos = (width: number, height: number) => ({
+    x: Math.max(0, Math.floor((window.innerWidth - width) / 2)),
+    y: Math.max(0, Math.floor((window.innerHeight - height) / 2)),
+  });
+  const getMobileSize = () => ({
+    w: window.innerWidth,
+    h: Math.min(
+      window.innerHeight,
+      Math.max(280, Math.floor(window.innerWidth * 0.75) + 40),
+    ),
+  });
 
   const [pos, setPos] = useState(() => ({
-    x: Math.max(0, Math.floor((window.innerWidth - DEFAULT_W) / 2)),
-    y: Math.max(0, Math.floor((window.innerHeight - DEFAULT_H) / 2)),
+    ...(isMobileViewport()
+      ? centerMobilePos(window.innerWidth, getMobileSize().h)
+      : {
+          x: Math.max(0, Math.floor((window.innerWidth - DEFAULT_W) / 2)),
+          y: Math.max(0, Math.floor((window.innerHeight - DEFAULT_H) / 2)),
+        }),
   }));
-  const [size, setSize] = useState({ w: DEFAULT_W, h: DEFAULT_H });
+  const [size, setSize] = useState(() =>
+    isMobileViewport() ? getMobileSize() : { w: DEFAULT_W, h: DEFAULT_H },
+  );
+  const [isMobile, setIsMobile] = useState(() => isMobileViewport());
 
   const dragRef = useRef<{
+    pointerId: number;
     startX: number;
     startY: number;
     origX: number;
     origY: number;
   } | null>(null);
   const resizeRef = useRef<{
+    pointerId: number;
     startX: number;
     startY: number;
     origW: number;
     origH: number;
   } | null>(null);
+  const pinchRef = useRef<{
+    startDistance: number;
+    startW: number;
+    startH: number;
+  } | null>(null);
+
+  function getTouchDistance(touches: TouchList): number {
+    if (touches.length < 2) return 0;
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.hypot(dx, dy);
+  }
+
+  const clampPosition = useCallback(
+    (nextX: number, nextY: number, width: number, height: number) => {
+      if (isMobileViewport()) {
+        return centerMobilePos(width, height);
+      }
+      return {
+        x: Math.max(0, Math.min(nextX, window.innerWidth - width)),
+        y: Math.max(0, Math.min(nextY, window.innerHeight - height)),
+      };
+    },
+    [],
+  );
 
   useEffect(() => {
-    function onMouseMove(e: MouseEvent) {
-      if (dragRef.current) {
-        const d = dragRef.current;
-        setPos({
-          x: d.origX + (e.clientX - d.startX),
-          y: d.origY + (e.clientY - d.startY),
-        });
+    function handleViewportChange() {
+      const mobile = isMobileViewport();
+      setIsMobile(mobile);
+
+      if (mobile) {
+        const mobileSize = getMobileSize();
+        setSize(mobileSize);
+        setPos(centerMobilePos(mobileSize.w, mobileSize.h));
+        return;
       }
-      if (resizeRef.current) {
+
+      setSize((prev) => {
+        const nextW = Math.min(Math.max(prev.w, MIN_W), window.innerWidth);
+        const nextH = Math.min(Math.max(prev.h, MIN_H), window.innerHeight);
+        return { w: nextW, h: nextH };
+      });
+      setPos((prev) => {
+        const next = clampPosition(prev.x, prev.y, size.w, size.h);
+        return next;
+      });
+    }
+
+    handleViewportChange();
+    window.addEventListener("resize", handleViewportChange);
+    return () => window.removeEventListener("resize", handleViewportChange);
+  }, [clampPosition, size.w, size.h]);
+
+  useEffect(() => {
+    function onPointerMove(e: PointerEvent) {
+      if (dragRef.current && dragRef.current.pointerId === e.pointerId) {
+        const d = dragRef.current;
+        const unclampedX = d.origX + (e.clientX - d.startX);
+        const unclampedY = d.origY + (e.clientY - d.startY);
+        setPos(clampPosition(unclampedX, unclampedY, size.w, size.h));
+      }
+      if (resizeRef.current && resizeRef.current.pointerId === e.pointerId) {
         const r = resizeRef.current;
+        const nextW = Math.max(MIN_W, r.origW + (e.clientX - r.startX));
+        const nextH = Math.max(MIN_H, r.origH + (e.clientY - r.startY));
         setSize({
-          w: Math.max(MIN_W, r.origW + (e.clientX - r.startX)),
-          h: Math.max(MIN_H, r.origH + (e.clientY - r.startY)),
+          w: Math.min(nextW, window.innerWidth),
+          h: Math.min(nextH, window.innerHeight),
         });
       }
     }
-    function onMouseUp() {
+    function onPointerUp(e: PointerEvent) {
+      if (dragRef.current?.pointerId === e.pointerId) {
+        dragRef.current = null;
+      }
+      if (resizeRef.current?.pointerId === e.pointerId) {
+        resizeRef.current = null;
+      }
+    }
+    function onPointerCancel() {
       dragRef.current = null;
       resizeRef.current = null;
     }
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerCancel);
     return () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
     };
-  }, []);
+  }, [clampPosition, size.w, size.h]);
+
+  function onMobileTouchStart(e: ReactTouchEvent<HTMLDivElement>) {
+    if (!isMobile || e.touches.length < 2) return;
+    const startDistance = getTouchDistance(e.touches);
+    if (!startDistance) return;
+    pinchRef.current = {
+      startDistance,
+      startW: size.w,
+      startH: size.h,
+    };
+  }
+
+  function onMobileTouchMove(e: ReactTouchEvent<HTMLDivElement>) {
+    if (!isMobile || !pinchRef.current || e.touches.length < 2) return;
+    e.preventDefault();
+
+    const currentDistance = getTouchDistance(e.touches);
+    if (!currentDistance) return;
+
+    const scale = currentDistance / pinchRef.current.startDistance;
+    const nextW = Math.max(
+      MOBILE_MIN_W,
+      Math.min(window.innerWidth, Math.round(pinchRef.current.startW * scale)),
+    );
+    const ratio = pinchRef.current.startH / pinchRef.current.startW;
+    const nextH = Math.max(
+      MIN_H,
+      Math.min(window.innerHeight, Math.round(nextW * ratio)),
+    );
+
+    setSize({ w: nextW, h: nextH });
+    setPos(centerMobilePos(nextW, nextH));
+  }
+
+  function onMobileTouchEnd(e: ReactTouchEvent<HTMLDivElement>) {
+    if (e.touches.length < 2) {
+      pinchRef.current = null;
+    }
+  }
 
   return (
     <div
-      className="fixed z-50 flex flex-col overflow-hidden rounded-lg border bg-background shadow-xl"
-      style={{ left: pos.x, top: pos.y, width: size.w, height: size.h }}
+      className="fixed z-50 flex flex-col overflow-hidden border bg-background shadow-xl"
+      style={{
+        left: pos.x,
+        top: pos.y,
+        width: size.w,
+        height: size.h,
+        borderRadius: isMobile ? 0 : 8,
+      }}
     >
       {/* Title bar — draggable */}
       <div
-        className="flex h-10 shrink-0 cursor-move items-center justify-between border-b bg-muted px-3"
-        onMouseDown={(e) => {
+        className={`flex h-10 shrink-0 items-center justify-between border-b bg-muted px-3 ${isMobile ? "cursor-default" : "cursor-move"}`}
+        onPointerDown={(e) => {
+          if (isMobile) return;
           e.preventDefault();
+          (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
           dragRef.current = {
+            pointerId: e.pointerId,
             startX: e.clientX,
             startY: e.clientY,
             origX: pos.x,
@@ -546,16 +689,25 @@ function VideoWindow({
         <span className="select-none text-sm font-medium truncate">
           {title} - {device.name} ({device.device_code})
         </span>
-        <button
-          onClick={onClose}
-          className="ml-2 shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
-          ✕
-        </button>
+        <div className="ml-2 flex items-center gap-1">
+          <button
+            onClick={onClose}
+            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            ✕
+          </button>
+        </div>
       </div>
 
       {/* Video content */}
-      <div className="flex flex-1 items-center justify-center bg-black">
+      <div
+        className="flex flex-1 items-center justify-center bg-black"
+        style={{ touchAction: isMobile ? "none" : "auto" }}
+        onTouchStart={onMobileTouchStart}
+        onTouchMove={onMobileTouchMove}
+        onTouchEnd={onMobileTouchEnd}
+        onTouchCancel={onMobileTouchEnd}
+      >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={`/api/admin/devices/${device.id}/stream?t=${streamKey}`}
@@ -566,23 +718,27 @@ function VideoWindow({
       </div>
 
       {/* Resize handle — bottom-right corner */}
-      <div
-        className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize"
-        onMouseDown={(e) => {
-          e.preventDefault();
-          resizeRef.current = {
-            startX: e.clientX,
-            startY: e.clientY,
-            origW: size.w,
-            origH: size.h,
-          };
-        }}
-      >
-        <svg viewBox="0 0 16 16" className="h-4 w-4 text-muted-foreground/50">
-          <path d="M14 14L8 14L14 8Z" fill="currentColor" />
-          <path d="M14 14L11 14L14 11Z" fill="currentColor" />
-        </svg>
-      </div>
+      {!isMobile && (
+        <div
+          className="absolute bottom-0 right-0 h-6 w-6 cursor-nwse-resize touch-none"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            resizeRef.current = {
+              pointerId: e.pointerId,
+              startX: e.clientX,
+              startY: e.clientY,
+              origW: size.w,
+              origH: size.h,
+            };
+          }}
+        >
+          <svg viewBox="0 0 16 16" className="h-6 w-6 text-muted-foreground/50">
+            <path d="M14 14L8 14L14 8Z" fill="currentColor" />
+            <path d="M14 14L11 14L14 11Z" fill="currentColor" />
+          </svg>
+        </div>
+      )}
     </div>
   );
 }
