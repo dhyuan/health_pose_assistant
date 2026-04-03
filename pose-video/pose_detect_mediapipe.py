@@ -110,11 +110,13 @@ CONFIG = {
     ],
     # ── 久坐坐/站判断阈值（根据你的摄像头位置校准）────────────
     # 实测参考：坐着 span≈0.215 hip_y≈0.537，站立 span≈0.287 hip_y≈0.458
-    "sitting_torso_span_threshold": 0.25,  # 肩髋距离 < 此值 → 投坐姿票
-    "sitting_hip_y_threshold": 0.48,  # 髋Y > 此值 → 投坐姿票
+    # 本地校准（用户摄像头）：坐着 span≈0.264 hip_y≈0.461
+    "sitting_torso_span_threshold": 0.27,  # 肩髋距离 < 此值 → 投坐姿票（调高避免误判站立）
+    "sitting_hip_y_threshold": 0.44,  # 髋Y > 此值 → 投坐姿票（调低以适配当前摄像头）
     "sitting_knee_angle_threshold": 130,  # 膝角 < 此值 → 投坐姿票（腿可见时）
     "sitting_torso_lean_threshold": 155,  # 躯干倾角 < 此值 → 明显前倾（弯腰）
     "sitting_knee_straight_threshold": 150,  # 膝角 > 此值 → 腿伸直（弯腰特征）
+    "sitting_knee_strong_threshold": 110,  # 膝角显著弯曲(<此值)时优先判定为坐姿
     "sitting_frame_smoothing": 3,  # 连续N帧判断为同一状态才切换（避免抖动）
 }
 
@@ -291,6 +293,7 @@ class PoseStateMachine:
         self.span_threshold = cfg["sitting_torso_span_threshold"]
         self.hip_y_thresh = cfg["sitting_hip_y_threshold"]
         self.knee_threshold = cfg["sitting_knee_angle_threshold"]
+        self.knee_strong_threshold = cfg.get("sitting_knee_strong_threshold", 110)
         self.frame_smoothing = cfg["sitting_frame_smoothing"]
 
         # ── 状态 ──
@@ -397,19 +400,42 @@ class PoseStateMachine:
             ds = " | ".join(f"{k}={v}" for k, v in debug_data.items())
             return False, "BENDING(TORSO<140°)→U", ds, torso_angle
 
+        # 获取髋部 Y 坐标用于站立判定的二次验证
+        hip_y = None
+        if lm_vis(landmarks, KP["left_hip"], threshold=0.3):
+            hip_y = landmarks[KP["left_hip"]].y
+
+        # 桌前侧视时，span/hip_y 可能受机位影响偏向站立；若膝盖显著弯曲则优先判为坐姿。
+        if (
+            knee_ang is not None
+            and knee_ang < self.knee_strong_threshold
+            and (torso_angle is None or torso_angle >= 145)
+        ):
+            ds = " | ".join(f"{k}={v}" for k, v in debug_data.items())
+            return (
+                True,
+                f"KNEE_STRONG({knee_ang:.0f}°)<{self.knee_strong_threshold}→S",
+                ds,
+                torso_angle,
+            )
+
         if (
             torso_angle is not None
             and 140 <= torso_angle <= 160
             and knee_ang is not None
             and knee_ang > 140
         ):
-            ds = " | ".join(f"{k}={v}" for k, v in debug_data.items())
-            return (
-                False,
-                f"MID-STAND(TORSO{torso_angle:.0f}°)∩KNEE({knee_ang:.0f}°)>140→U",
-                ds,
-                torso_angle,
-            )
+            # 如果髋部位置高（>= 0.48），表示已坐下，不强制为站立
+            if hip_y is not None and hip_y >= self.hip_y_thresh:
+                pass  # 让投票逻辑来判定
+            else:
+                ds = " | ".join(f"{k}={v}" for k, v in debug_data.items())
+                return (
+                    False,
+                    f"MID-STAND(TORSO{torso_angle:.0f}°)∩KNEE({knee_ang:.0f}°)>140→U",
+                    ds,
+                    torso_angle,
+                )
 
         if (
             torso_angle is not None
@@ -417,13 +443,17 @@ class PoseStateMachine:
             and knee_ang is not None
             and knee_ang > 140
         ):
-            ds = " | ".join(f"{k}={v}" for k, v in debug_data.items())
-            return (
-                False,
-                f"TORSO({torso_angle:.0f}°)>160∩KNEE({knee_ang:.0f}°)>140→U",
-                ds,
-                torso_angle,
-            )
+            # 如果髋部位置高（>= 0.48），表示已坐下，不强制为站立
+            if hip_y is not None and hip_y >= self.hip_y_thresh:
+                pass  # 让投票逻辑来判定
+            else:
+                ds = " | ".join(f"{k}={v}" for k, v in debug_data.items())
+                return (
+                    False,
+                    f"TORSO({torso_angle:.0f}°)>160∩KNEE({knee_ang:.0f}°)>140→U",
+                    ds,
+                    torso_angle,
+                )
 
         # ═══ 特征投票 ═══
         if all_vis(landmarks, KP["left_hip"], KP["left_shoulder"], threshold=0.3):
@@ -451,7 +481,14 @@ class PoseStateMachine:
 
         sitting_votes = sum(1 for _, v in votes if v)
         is_sitting = sitting_votes > len(votes) / 2
+        if not is_sitting and sitting_votes * 2 == len(votes):
+            # 桌前侧视常见 span/hip_y 2票打平：若 hip_y 投坐姿，则偏向坐姿。
+            hip_vote = next((v for n, v in votes if n == "hip_y"), False)
+            if hip_vote:
+                is_sitting = True
         vs = " ".join(f"{n}:{'S' if v else 'U'}" for n, v in votes)
+        if is_sitting and sitting_votes * 2 == len(votes):
+            vs += " TIE→S(hip_y)"
         return is_sitting, vs, ds, torso_angle
 
     # ─────────────────────── 状态转换辅助 ───────────────────────

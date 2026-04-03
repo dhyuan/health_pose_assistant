@@ -37,6 +37,7 @@ _SM_ATTR_MAP = {
     "sitting_torso_span_threshold": "span_threshold",
     "sitting_hip_y_threshold": "hip_y_thresh",
     "sitting_knee_angle_threshold": "knee_threshold",
+    "sitting_knee_strong_threshold": "knee_strong_threshold",
     "sitting_frame_smoothing": "frame_smoothing",
 }
 

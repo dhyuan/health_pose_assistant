@@ -122,6 +122,26 @@ class TestAdminConfig:
         # old keys should be gone (full replace, not merge)
         assert "bad_posture_threshold" not in data["config_json"]
 
+    def test_reset_config_creates_default_profile(self, client, admin_headers):
+        resp = client.post("/api/v1/admin/config/reset", headers=admin_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["version"] == 1
+        assert data["config_json"]["sitting_torso_span_threshold"] == 0.27
+        assert data["config_json"]["sitting_hip_y_threshold"] == 0.44
+        assert data["config_json"]["sitting_knee_strong_threshold"] == 110
+
+    def test_reset_config_overwrites_and_increments_version(
+        self, client, admin_headers, active_config
+    ):
+        resp = client.post("/api/v1/admin/config/reset", headers=admin_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["version"] == 2
+        assert data["config_json"]["sitting_torso_span_threshold"] == 0.27
+        assert data["config_json"]["sitting_hip_y_threshold"] == 0.44
+        assert "bad_posture_threshold" not in data["config_json"]
+
 
 class TestAdminStats:
     def test_stats_empty(self, client, admin_headers):

@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { getConfig, updateConfig, type ConfigProfile } from "@/lib/api";
+import {
+  getConfig,
+  resetConfigToDefault,
+  updateConfig,
+  type ConfigProfile,
+} from "@/lib/api";
 import { DEFAULT_CONFIG, HIDDEN_KEYS } from "@/lib/default-config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -161,6 +166,11 @@ const FIELD_META_ZH: Record<string, FieldMeta> = {
     description: "膝角 > 此值 → 腿伸直（弯腰特征）",
     tab: "advanced",
   },
+  sitting_knee_strong_threshold: {
+    label: "膝角强坐姿阈值",
+    description: "膝角 < 此值 且躯干不过度前倾时，优先判定为坐姿",
+    tab: "advanced",
+  },
   sitting_frame_smoothing: {
     label: "帧平滑数",
     description: "连续 N 帧判断为同一状态才切换（避免抖动）",
@@ -287,6 +297,12 @@ const FIELD_META_EN: Record<string, FieldMeta> = {
     description: "Knee angle > this value => leg straight",
     tab: "advanced",
   },
+  sitting_knee_strong_threshold: {
+    label: "Strong knee sitting threshold",
+    description:
+      "If knee angle < this value and torso is not deeply bent, force sitting",
+    tab: "advanced",
+  },
   sitting_frame_smoothing: {
     label: "Frame smoothing",
     description: "Require N consecutive frames before switching state",
@@ -372,6 +388,23 @@ export default function SettingsPage() {
       setNoConfig(false);
       setDirty(false);
       setSuccessMsg(t("settings.createSuccess"));
+    } catch (e: unknown) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleResetDefault() {
+    setSaving(true);
+    setError("");
+    setSuccessMsg("");
+    try {
+      const p = await resetConfigToDefault();
+      setProfile(p);
+      setConfig({ ...(DEFAULT_CONFIG as Config), ...p.config_json });
+      setDirty(false);
+      setSuccessMsg(t("settings.resetSuccess", { version: p.version }));
     } catch (e: unknown) {
       setError(String(e));
     } finally {
@@ -575,6 +608,13 @@ export default function SettingsPage() {
             </Badge>
           )}
           {error && <Badge variant="destructive">{error}</Badge>}
+          <Button
+            variant="outline"
+            onClick={handleResetDefault}
+            disabled={saving}
+          >
+            {saving ? t("settings.resetting") : t("settings.resetDefault")}
+          </Button>
           <Button onClick={handleSave} disabled={saving || !dirty}>
             {saving ? t("settings.saving") : t("settings.saveConfig")}
           </Button>
@@ -663,6 +703,7 @@ export default function SettingsPage() {
                 "sitting_knee_angle_threshold",
                 "sitting_torso_lean_threshold",
                 "sitting_knee_straight_threshold",
+                "sitting_knee_strong_threshold",
                 "sitting_frame_smoothing",
               ].map(renderField)}
             </CardContent>
@@ -687,7 +728,8 @@ function getNumberRange(
   }
   if (
     key === "sitting_knee_angle_threshold" ||
-    key === "sitting_knee_straight_threshold"
+    key === "sitting_knee_straight_threshold" ||
+    key === "sitting_knee_strong_threshold"
   ) {
     return { min: 90, max: 180, step: 1 };
   }

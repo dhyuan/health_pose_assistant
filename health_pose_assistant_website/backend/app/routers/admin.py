@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
+from app.core.default_config import DEFAULT_CONFIG
 from app.core.security import generate_device_token
 from app.db.session import get_db
 from app.deps import require_admin
@@ -165,6 +166,28 @@ def update_config(
     else:
         profile.config_json = body.config_json
         profile.version += 1
+    db.commit()
+    db.refresh(profile)
+    return profile
+
+
+@router.post("/config/reset", response_model=ConfigOut)
+def reset_config_to_default(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    profile = db.query(ConfigProfile).filter(ConfigProfile.is_active.is_(True)).first()
+    default_json = dict(DEFAULT_CONFIG)
+
+    if profile is None:
+        profile = ConfigProfile(
+            name="default", version=1, config_json=default_json, is_active=True
+        )
+        db.add(profile)
+    else:
+        profile.config_json = default_json
+        profile.version += 1
+
     db.commit()
     db.refresh(profile)
     return profile
