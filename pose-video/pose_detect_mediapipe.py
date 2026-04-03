@@ -65,6 +65,10 @@ CONFIG = {
     "port": 9999,
     # ── 视频旋转 ──────────────────────────────────────────────
     "video_rotation_angle": 180,  # 视频旋转角度（0/90/180/270 度）
+    # ── MediaPipe 检测参数 ────────────────────────────────────
+    "pose_min_detection_confidence": 0.5,
+    "pose_min_tracking_confidence": 0.3,
+    "pose_core_visibility_threshold": 0.33,
     # ── 坐姿检测 ──────────────────────────────────────────────
     "posture_torso_threshold": 145,  # 躯干角 < 此值 → 驼背警告（度）。
     "posture_head_forward_threshold": 0.05,  # 头部前倾阈值（鼻子相对肩膀的x位移 > 此值 → 头部前倾）
@@ -1047,6 +1051,23 @@ def main(args):
     cfg = CONFIG.copy()
     cfg["port"] = args.port
 
+    if args.production:
+        # 生产模式使用已验证稳定参数，并默认关闭诊断日志。
+        args.diagnostics = False
+        if args.pose_detection_conf is None:
+            args.pose_detection_conf = 0.5
+        if args.pose_tracking_conf is None:
+            args.pose_tracking_conf = 0.3
+        if args.pose_core_vis_threshold is None:
+            args.pose_core_vis_threshold = 0.33
+
+    if args.pose_detection_conf is not None:
+        cfg["pose_min_detection_confidence"] = args.pose_detection_conf
+    if args.pose_tracking_conf is not None:
+        cfg["pose_min_tracking_confidence"] = args.pose_tracking_conf
+    if args.pose_core_vis_threshold is not None:
+        cfg["pose_core_visibility_threshold"] = args.pose_core_vis_threshold
+
     state_machine = PoseStateMachine(cfg)
     exercise_ctr = ExerciseCounter(cfg)
 
@@ -1095,11 +1116,22 @@ def main(args):
 
     mp_pose = mp.solutions.pose
     mp_drawing = mp.solutions.drawing_utils
-    mp_styles = mp.solutions.drawing_styles
+    landmark_spec = mp_drawing.DrawingSpec(
+        color=(0, 255, 255), thickness=2, circle_radius=2
+    )
+    connection_spec = mp_drawing.DrawingSpec(
+        color=(0, 255, 0), thickness=2, circle_radius=2
+    )
 
     fps_counter, fps_start, current_fps = 0, time.time(), 0.0
     _alert_proc = None  # 记录 say 进程，上一句播完才播下一句
     _last_voice_time: float = 0.0  # 任意两条语音之间的最小冷却时间
+    _diag_total_frames = 0
+    _diag_pose_detected_frames = 0
+    _diag_fallback_detected_frames = 0
+    _diag_core_filtered_frames = 0
+    _diag_last_ts = time.time()
+    _diag_luma_sum = 0.0
 
     if args.source is not None:
         frame_gen = open_local_camera(int(args.source))
@@ -1110,16 +1142,35 @@ def main(args):
     print("[INFO] 按 q 退出")
 
     with mp_pose.Pose(
-        min_detection_confidence=0.6,
-        min_tracking_confidence=0.4,
+        min_detection_confidence=cfg["pose_min_detection_confidence"],
+        min_tracking_confidence=cfg["pose_min_tracking_confidence"],
         model_complexity=1,
     ) as pose:
         for frame in frame_gen:
+            _diag_total_frames += 1
+            # 先旋转再推理，避免相机倒置导致检测率接近 0。
+            frame = rotate_frame(frame, cfg["video_rotation_angle"])
             # ── MediaPipe 推理 ────────────────────────────────
+            _diag_luma_sum += float(np.mean(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)))
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             rgb.flags.writeable = False
             results = pose.process(rgb)
             rgb.flags.writeable = True
+
+            # 某些 Pi 流可能出现通道顺序异常：首轮失败时回退再试一次。
+            used_fallback = False
+            if not results.pose_landmarks:
+                frame.flags.writeable = False
+                fallback_results = pose.process(frame)
+                frame.flags.writeable = True
+                if fallback_results.pose_landmarks:
+                    results = fallback_results
+                    used_fallback = True
+
+            if results.pose_landmarks:
+                _diag_pose_detected_frames += 1
+                if used_fallback:
+                    _diag_fallback_detected_frames += 1
 
             # ── 骨骼绘制 ──────────────────────────────────────
             if results.pose_landmarks:
@@ -1127,7 +1178,8 @@ def main(args):
                     frame,
                     results.pose_landmarks,
                     mp_pose.POSE_CONNECTIONS,
-                    landmark_drawing_spec=mp_styles.get_default_pose_landmarks_style(),
+                    landmark_drawing_spec=landmark_spec,
+                    connection_drawing_spec=connection_spec,
                 )
 
             lms = results.pose_landmarks.landmark if results.pose_landmarks else None
@@ -1141,8 +1193,36 @@ def main(args):
                     KP["right_hip"],
                 ]
                 avg_vis = sum(lms[i].visibility for i in _core) / len(_core)
-                if avg_vis < 0.5:
+                if avg_vis < cfg["pose_core_visibility_threshold"]:
+                    _diag_core_filtered_frames += 1
                     lms = None
+
+            if args.diagnostics:
+                now_diag = time.time()
+                if now_diag - _diag_last_ts >= args.diag_interval:
+                    detect_rate = _diag_pose_detected_frames / max(
+                        _diag_total_frames, 1
+                    )
+                    filtered_rate = _diag_core_filtered_frames / max(
+                        _diag_pose_detected_frames, 1
+                    )
+                    logger.info(
+                        "Diag: frames=%d detect_rate=%.1f%% fallback_hits=%d core_filtered=%.1f%% avg_luma=%.1f conf(det=%.2f, track=%.2f, vis=%.2f)",
+                        _diag_total_frames,
+                        detect_rate * 100,
+                        _diag_fallback_detected_frames,
+                        filtered_rate * 100,
+                        _diag_luma_sum / max(_diag_total_frames, 1),
+                        cfg["pose_min_detection_confidence"],
+                        cfg["pose_min_tracking_confidence"],
+                        cfg["pose_core_visibility_threshold"],
+                    )
+                    _diag_total_frames = 0
+                    _diag_pose_detected_frames = 0
+                    _diag_fallback_detected_frames = 0
+                    _diag_core_filtered_frames = 0
+                    _diag_luma_sum = 0.0
+                    _diag_last_ts = now_diag
 
             # ── 状态机更新（始终调用，传 None 表示检测不到人）──
             sm_result = state_machine.update(lms)
@@ -1212,8 +1292,6 @@ def main(args):
                         state_machine._welcome_voice_played = True
                         state_machine._leave_voice_played = False
 
-            # ── 视频旋转 ──────────────────────────────────────────
-            frame = rotate_frame(frame, cfg["video_rotation_angle"])
             # ── 画面叠加 ──────────────────────────────────────
             draw_overlay(frame, sm_result, exercise, current_fps, cfg)
 
@@ -1278,6 +1356,40 @@ if __name__ == "__main__":
         "--headless",
         action="store_true",
         help="无窗口模式（不打开 OpenCV 窗口，仅通过 MJPEG 流输出）",
+    )
+    parser.add_argument(
+        "--production",
+        action="store_true",
+        help="生产模式：关闭诊断日志并应用稳定阈值",
+    )
+    parser.add_argument(
+        "--pose-detection-conf",
+        type=float,
+        default=None,
+        help="覆盖姿态初检置信度（默认使用内置配置 0.5）",
+    )
+    parser.add_argument(
+        "--pose-tracking-conf",
+        type=float,
+        default=None,
+        help="覆盖姿态跟踪置信度（默认使用内置配置 0.3）",
+    )
+    parser.add_argument(
+        "--pose-core-vis-threshold",
+        type=float,
+        default=None,
+        help="覆盖肩髋核心点平均可见度阈值（默认使用内置配置 0.33）",
+    )
+    parser.add_argument(
+        "--diagnostics",
+        action="store_true",
+        help="打印姿态检测诊断日志（检测命中率/过滤率）",
+    )
+    parser.add_argument(
+        "--diag-interval",
+        type=float,
+        default=5.0,
+        help="诊断日志输出间隔秒数（默认 5.0）",
     )
     args = parser.parse_args()
     CONFIG["video_rotation_angle"] = args.rotation

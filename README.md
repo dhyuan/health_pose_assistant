@@ -118,8 +118,10 @@ Default URLs:
 
 ```bash
 cd pose-video
-python3.11 -m venv .venv
-source .venv/bin/activate
+
+# Create environment once (if pose_ai_env does not exist)
+python3.11 -m venv pose_ai_env
+source ./pose_ai_env/bin/activate
 pip install -r requirements.txt
 
 # Local camera mode
@@ -127,6 +129,39 @@ python3 pose_detect_mediapipe.py --source 0
 
 # Pi streaming mode (default TCP 9999)
 python3 pose_detect_mediapipe.py
+
+# Recommended production mode (headless + stable thresholds)
+python3 pose_detect_mediapipe.py \
+  --api-url http://localhost:8000 \
+  --device-token <YOUR_DEVICE_TOKEN> \
+  --stream-port 8080 \
+  --config-interval 10 \
+  --headless --production
+
+# Optional diagnostics mode (for troubleshooting)
+python3 pose_detect_mediapipe.py \
+  --api-url http://localhost:8000 \
+  --device-token <YOUR_DEVICE_TOKEN> \
+  --stream-port 8080 \
+  --config-interval 10 \
+  --headless --diagnostics --diag-interval 5
+```
+
+Prerequisites:
+- If using `--api-url http://localhost:8000`, ensure backend is running and port 8000 is reachable.
+- If you see `OSError: [Errno 48] Address already in use`, port 8080 is occupied.
+
+Ways to resolve:
+```bash
+# Option 1: Use another MJPEG port
+python3 pose_detect_mediapipe.py ... --stream-port 8081
+
+# Option 2: Disable MJPEG output
+python3 pose_detect_mediapipe.py ... --stream-port 0
+
+# Option 3: Find and stop process using 8080 (macOS)
+lsof -nP -iTCP:8080 -sTCP:LISTEN
+kill <PID>
 ```
 
 ### 3) Connect edge client to backend (optional)

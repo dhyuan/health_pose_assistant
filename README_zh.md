@@ -134,8 +134,10 @@ bash scripts/setup_dev.sh
 
 ```bash
 cd pose-video
-python3.11 -m venv .venv
-source .venv/bin/activate
+
+# 首次使用时创建环境（若 pose_ai_env 不存在）
+python3.11 -m venv pose_ai_env
+source ./pose_ai_env/bin/activate
 pip install -r requirements.txt
 
 # 本地摄像头调试
@@ -143,6 +145,39 @@ python3 pose_detect_mediapipe.py --source 0
 
 # 等待 Pi 推流（默认 TCP 9999）
 python3 pose_detect_mediapipe.py
+
+# 推荐生产模式（无窗口 + 稳定阈值）
+python3 pose_detect_mediapipe.py \
+  --api-url http://localhost:8000 \
+  --device-token <YOUR_DEVICE_TOKEN> \
+  --stream-port 8080 \
+  --config-interval 10 \
+  --headless --production
+
+# 可选诊断模式（排查用）
+python3 pose_detect_mediapipe.py \
+  --api-url http://localhost:8000 \
+  --device-token <YOUR_DEVICE_TOKEN> \
+  --stream-port 8080 \
+  --config-interval 10 \
+  --headless --diagnostics --diag-interval 5
+```
+
+启动前提：
+- 若使用 `--api-url http://localhost:8000`，请先启动后端并确认 8000 端口可访问。
+- 若出现 `OSError: [Errno 48] Address already in use`，说明 8080 被占用。
+
+可用处理方式：
+```bash
+# 方式1：改用其他 MJPEG 端口
+python3 pose_detect_mediapipe.py ... --stream-port 8081
+
+# 方式2：不启用 MJPEG 输出
+python3 pose_detect_mediapipe.py ... --stream-port 0
+
+# 方式3：查找并结束占用 8080 的进程（macOS）
+lsof -nP -iTCP:8080 -sTCP:LISTEN
+kill <PID>
 ```
 
 ### 3) 接入后端（可选）
