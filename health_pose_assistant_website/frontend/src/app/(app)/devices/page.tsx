@@ -691,7 +691,11 @@ function VideoWindow({
         </span>
         <div className="ml-2 flex items-center gap-1">
           <button
-            onClick={onClose}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
             className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
           >
             ✕
