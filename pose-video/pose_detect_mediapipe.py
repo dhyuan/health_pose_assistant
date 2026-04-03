@@ -67,8 +67,8 @@ CONFIG = {
     "video_rotation_angle": 180,  # 视频旋转角度（0/90/180/270 度）
     # ── MediaPipe 检测参数 ────────────────────────────────────
     "pose_min_detection_confidence": 0.5,
-    "pose_min_tracking_confidence": 0.3,
-    "pose_core_visibility_threshold": 0.33,
+    "pose_min_tracking_confidence": 0.5,
+    "pose_core_visibility_threshold": 0.5,
     # ── 坐姿检测 ──────────────────────────────────────────────
     "posture_torso_threshold": 145,  # 躯干角 < 此值 → 驼背警告（度）。
     "posture_head_forward_threshold": 0.05,  # 头部前倾阈值（鼻子相对肩膀的x位移 > 此值 → 头部前倾）
