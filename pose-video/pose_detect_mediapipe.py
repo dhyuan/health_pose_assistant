@@ -709,6 +709,7 @@ class PoseStateMachine:
             "state_name": self.state.name,
             "torso_angle": None,
             "head_forward": None,
+            "posture_head_forward_threshold": self.head_forward_threshold,
             "is_sitting": False,
             "current_sitting_minutes": 0.0,
             "accumulated_sitting_minutes": 0.0,
@@ -864,17 +865,28 @@ def draw_overlay(frame, sm_result: dict, exercise: dict, fps: float, cfg: dict):
 
     state_name = sm_result.get("state_name", "AWAY")
     torso_angle = sm_result.get("torso_angle")
+    head_forward = sm_result.get("head_forward")
 
     # 坐姿状态 + 躯干角
     if cfg["enable_posture"] and torso_angle is not None:
         ang = f"{torso_angle:.1f}"
+        hf_text = "N/A"
+        if head_forward is not None:
+            hf_text = f"{head_forward:.3f}"
+        hf_thr = sm_result.get(
+            "posture_head_forward_threshold",
+            cfg.get("posture_head_forward_threshold", 0.05),
+        )
         if sm_result["alert_posture"]:
             put(f"[!] POSTURE BAD  {ang}deg", 70, (0, 0, 255))
         elif state_name == "SITTING_BAD":
             put(f"Posture: slouching  {ang}deg", 70, (0, 165, 255))
         else:
             put(f"Posture: good  {ang}deg", 70, (0, 220, 0))
-        put_small(f"  State: {state_name}  Torso={ang}deg", 95)
+        put_small(
+            f"  State: {state_name}  Torso={ang}deg  HeadF={hf_text}(阈值:{hf_thr})",
+            95,
+        )
 
     # 运动计数
     if cfg["enable_exercise"]:
