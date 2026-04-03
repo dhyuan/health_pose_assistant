@@ -47,6 +47,10 @@ DEFAULT_CONFIG: dict = {
         "新的开始，让我们再来！",
         "精神焕发了吧，冲起来！",
     ],
+    # MediaPipe detection parameters
+    "pose_min_detection_confidence": 0.5,
+    "pose_min_tracking_confidence": 0.5,
+    "pose_core_visibility_threshold": 0.5,
     # Sit/stand thresholds (desk-side calibrated)
     "sitting_torso_span_threshold": 0.27,
     "sitting_hip_y_threshold": 0.44,

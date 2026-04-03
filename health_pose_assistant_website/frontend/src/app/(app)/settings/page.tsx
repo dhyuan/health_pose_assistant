@@ -176,6 +176,25 @@ const FIELD_META_ZH: Record<string, FieldMeta> = {
     description: "连续 N 帧判断为同一状态才切换（避免抖动）",
     tab: "advanced",
   },
+  // Advanced — MediaPipe detection
+  pose_min_detection_confidence: {
+    label: "MediaPipe 初次检测置信度",
+    description:
+      "首次检测到人体所需的最低置信度（0~1）。越高越不易误报，但真实用户进入画面时反应稍慢。修改后需重启程序生效。",
+    tab: "advanced",
+  },
+  pose_min_tracking_confidence: {
+    label: "MediaPipe 跟踪置信度",
+    description:
+      "跟踪模式的最低置信度（0~1）。低于此值就重新检测。太低会导致人离开后仍被判定为有人。修改后需重启程序生效。",
+    tab: "advanced",
+  },
+  pose_core_visibility_threshold: {
+    label: "核心关节可见度阈值",
+    description:
+      "左右肩 + 左右髋四个关节点平均可见度 < 此值 → 丢弃本帧结果（当作无人）。拦截背景物体被误识为人，即时生效。",
+    tab: "advanced",
+  },
 };
 
 const FIELD_META_EN: Record<string, FieldMeta> = {
@@ -306,6 +325,25 @@ const FIELD_META_EN: Record<string, FieldMeta> = {
   sitting_frame_smoothing: {
     label: "Frame smoothing",
     description: "Require N consecutive frames before switching state",
+    tab: "advanced",
+  },
+  // Advanced — MediaPipe detection
+  pose_min_detection_confidence: {
+    label: "MediaPipe detection confidence",
+    description:
+      "Minimum confidence for initial body detection (0–1). Higher = fewer false positives but slower to detect. Requires restart to take effect.",
+    tab: "advanced",
+  },
+  pose_min_tracking_confidence: {
+    label: "MediaPipe tracking confidence",
+    description:
+      "Minimum confidence to stay in tracking mode (0–1). Too low causes the model to keep predicting landmarks after a person leaves. Requires restart to take effect.",
+    tab: "advanced",
+  },
+  pose_core_visibility_threshold: {
+    label: "Core joint visibility threshold",
+    description:
+      "Average visibility of both shoulders + both hips must exceed this value, otherwise the frame is discarded as no-person. Takes effect immediately.",
     tab: "advanced",
   },
 };
@@ -706,6 +744,16 @@ export default function SettingsPage() {
                 "sitting_knee_strong_threshold",
                 "sitting_frame_smoothing",
               ].map(renderField)}
+              <Separator className="my-4" />
+
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                {t("settings.sectionMediaPipe")}
+              </h3>
+              {[
+                "pose_min_detection_confidence",
+                "pose_min_tracking_confidence",
+                "pose_core_visibility_threshold",
+              ].map(renderField)}
             </CardContent>
           </Card>
         </TabsContent>
@@ -747,5 +795,12 @@ function getNumberRange(
   if (key === "sitting_repeat_alert_minutes")
     return { min: 0.5, max: 30, step: 0.5 };
   if (key === "sitting_frame_smoothing") return { min: 1, max: 10, step: 1 };
+  if (
+    key === "pose_min_detection_confidence" ||
+    key === "pose_min_tracking_confidence" ||
+    key === "pose_core_visibility_threshold"
+  ) {
+    return { min: 0.1, max: 1.0, step: 0.05 };
+  }
   return { min: 0, max: Math.max(currentValue * 3, 100), step: 1 };
 }

@@ -59,6 +59,14 @@ _CFG_DIRECT_KEYS = {
     "leave_messages",
     "welcome_back_messages",
     "video_rotation_angle",
+    # MediaPipe detection params
+    # pose_core_visibility_threshold is read every frame → hot-patched immediately.
+    # pose_min_detection/tracking_confidence are baked into the Pose() constructor;
+    # updating cfg here ensures they take effect on the next process restart,
+    # and on initial startup if sync_initial() is called before Pose() is opened.
+    "pose_min_detection_confidence",
+    "pose_min_tracking_confidence",
+    "pose_core_visibility_threshold",
 }
 
 
@@ -92,6 +100,21 @@ class ConfigClient:
         t = threading.Thread(target=self._loop, name="config-client", daemon=True)
         t.start()
         return t
+
+    def sync_initial(self):
+        """Perform one synchronous config poll before the main loop starts.
+
+        Call this before opening the MediaPipe Pose() context so that
+        pose_min_detection_confidence and pose_min_tracking_confidence from
+        the server are applied to cfg before the Pose object is constructed.
+        """
+        try:
+            self._poll()
+            logger.info("Initial config sync completed (version=%d)", self._version)
+        except Exception:
+            logger.warning(
+                "Initial config sync failed, using local defaults", exc_info=True
+            )
 
     def stop(self):
         self._stop.set()

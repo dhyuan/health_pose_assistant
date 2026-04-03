@@ -1162,6 +1162,10 @@ def main(args):
         threading.Thread(target=_heartbeat_loop, name="heartbeat", daemon=True).start()
 
         logger.info("已连接后端 %s", args.api_url)
+        # Sync config from server once before opening the Pose() context, so that
+        # pose_min_detection_confidence / pose_min_tracking_confidence from the
+        # server are applied before the MediaPipe Pose object is constructed.
+        config_client.sync_initial()
 
     mp_pose = mp.solutions.pose
     mp_drawing = mp.solutions.drawing_utils
