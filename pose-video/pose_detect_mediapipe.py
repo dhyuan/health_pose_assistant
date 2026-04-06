@@ -69,6 +69,13 @@ CONFIG = {
     "pose_min_detection_confidence": 0.5,
     "pose_min_tracking_confidence": 0.5,
     "pose_core_visibility_threshold": 0.5,
+    "pose_presence_landmark_threshold": 0.35,
+    "pose_presence_in_frame_margin": 0.02,
+    "pose_min_core_visible_count": 3,
+    "pose_min_head_visible_count": 1,
+    "pose_require_same_side_torso": True,
+    "pose_min_torso_span": 0.16,
+    "pose_presence_confirm_frames": 3,
     # ── 坐姿检测 ──────────────────────────────────────────────
     "posture_torso_threshold": 145,  # 躯干角 < 此值 → 驼背警告（度）。
     "posture_head_forward_threshold": 0.05,  # 头部前倾阈值（鼻子相对肩膀的x位移 > 此值 → 头部前倾）
@@ -141,6 +148,21 @@ KP = {
     "right_ankle": 28,
 }
 
+CORE_KPS = [
+    KP["left_shoulder"],
+    KP["right_shoulder"],
+    KP["left_hip"],
+    KP["right_hip"],
+]
+
+HEAD_KPS = [
+    KP["nose"],
+    KP["left_eye"],
+    KP["right_eye"],
+    KP["left_ear"],
+    KP["right_ear"],
+]
+
 
 # ══════════════════════════════════════════════════════════════
 #  工具函数
@@ -165,6 +187,98 @@ def lm_vis(landmarks, idx: int, threshold=0.4) -> bool:
 
 def all_vis(landmarks, *indices, threshold=0.4) -> bool:
     return all(lm_vis(landmarks, i, threshold) for i in indices)
+
+
+def lm_in_frame(landmarks, idx: int, margin=0.02) -> bool:
+    p = landmarks[idx]
+    return -margin <= p.x <= 1 + margin and -margin <= p.y <= 1 + margin
+
+
+def lm_present(landmarks, idx: int, threshold=0.4, margin=0.02) -> bool:
+    return lm_vis(landmarks, idx, threshold) and lm_in_frame(landmarks, idx, margin)
+
+
+def count_vis(landmarks, indices, threshold=0.4) -> int:
+    return sum(1 for i in indices if lm_vis(landmarks, i, threshold))
+
+
+def count_present(landmarks, indices, threshold=0.4, margin=0.02) -> int:
+    return sum(1 for i in indices if lm_present(landmarks, i, threshold, margin))
+
+
+def pose_presence_metrics(landmarks, threshold=0.35, margin=0.02) -> dict:
+    core_visible_count = count_present(landmarks, CORE_KPS, threshold, margin)
+    head_visible_count = count_present(landmarks, HEAD_KPS, threshold, margin)
+    has_shoulder = (
+        count_present(
+            landmarks,
+            [KP["left_shoulder"], KP["right_shoulder"]],
+            threshold,
+            margin,
+        )
+        >= 1
+    )
+    has_hip = (
+        count_present(
+            landmarks,
+            [KP["left_hip"], KP["right_hip"]],
+            threshold,
+            margin,
+        )
+        >= 1
+    )
+    left_torso_ok = lm_present(
+        landmarks,
+        KP["left_shoulder"],
+        threshold,
+        margin,
+    ) and lm_present(landmarks, KP["left_hip"], threshold, margin)
+    right_torso_ok = lm_present(
+        landmarks,
+        KP["right_shoulder"],
+        threshold,
+        margin,
+    ) and lm_present(landmarks, KP["right_hip"], threshold, margin)
+    same_side_torso = left_torso_ok or right_torso_ok
+    torso_spans = []
+    if left_torso_ok:
+        torso_spans.append(
+            abs(landmarks[KP["left_hip"]].y - landmarks[KP["left_shoulder"]].y)
+        )
+    if right_torso_ok:
+        torso_spans.append(
+            abs(landmarks[KP["right_hip"]].y - landmarks[KP["right_shoulder"]].y)
+        )
+    max_torso_span = max(torso_spans) if torso_spans else 0.0
+    avg_core_vis = sum(landmarks[i].visibility for i in CORE_KPS) / len(CORE_KPS)
+    return {
+        "avg_core_vis": avg_core_vis,
+        "core_visible_count": core_visible_count,
+        "head_visible_count": head_visible_count,
+        "has_shoulder": has_shoulder,
+        "has_hip": has_hip,
+        "same_side_torso": same_side_torso,
+        "max_torso_span": max_torso_span,
+    }
+
+
+def passes_pose_presence_gate(landmarks, cfg: dict) -> bool:
+    threshold = cfg.get("pose_presence_landmark_threshold", 0.35)
+    margin = cfg.get("pose_presence_in_frame_margin", 0.02)
+    metrics = pose_presence_metrics(landmarks, threshold=threshold, margin=margin)
+    if metrics["avg_core_vis"] < cfg["pose_core_visibility_threshold"]:
+        return False
+    if metrics["core_visible_count"] < cfg.get("pose_min_core_visible_count", 3):
+        return False
+    if metrics["head_visible_count"] < cfg.get("pose_min_head_visible_count", 1):
+        return False
+    if not metrics["has_shoulder"] or not metrics["has_hip"]:
+        return False
+    if cfg.get("pose_require_same_side_torso", True) and not metrics["same_side_torso"]:
+        return False
+    if metrics["max_torso_span"] < cfg.get("pose_min_torso_span", 0.16):
+        return False
+    return True
 
 
 def rotate_frame(frame: np.ndarray, angle: int) -> np.ndarray:
@@ -290,6 +404,16 @@ class PoseStateMachine:
         self.stand_clear_seconds = cfg["sitting_stand_seconds"]
         self.away_reset_seconds = 10  # 离开超过10秒→视为主动休息，清零当前坐时
         self.away_clear_seconds = 5 * 60  # 离开超过5分钟→清零当前坐时
+        self.core_visibility_threshold = cfg["pose_core_visibility_threshold"]
+        self.presence_landmark_threshold = cfg.get(
+            "pose_presence_landmark_threshold", 0.35
+        )
+        self.presence_in_frame_margin = cfg.get("pose_presence_in_frame_margin", 0.02)
+        self.min_core_visible_count = cfg.get("pose_min_core_visible_count", 3)
+        self.min_head_visible_count = cfg.get("pose_min_head_visible_count", 1)
+        self.require_same_side_torso = cfg.get("pose_require_same_side_torso", True)
+        self.min_torso_span = cfg.get("pose_min_torso_span", 0.16)
+        self.presence_confirm_frames = cfg.get("pose_presence_confirm_frames", 3)
         self.span_threshold = cfg["sitting_torso_span_threshold"]
         self.hip_y_thresh = cfg["sitting_hip_y_threshold"]
         self.knee_threshold = cfg["sitting_knee_angle_threshold"]
@@ -318,6 +442,7 @@ class PoseStateMachine:
         self._sit_frame_count: int = 0
         self._stand_frame_count: int = 0
         self._last_raw_sitting: bool = False
+        self._present_frame_count: int = 0
 
         # ── 显示缓存 ──
         self._last_current_minutes: float = 0.0
@@ -536,14 +661,25 @@ class PoseStateMachine:
             self._current_session_elapsed = 0
 
     def _can_detect(self, landmarks) -> bool:
-        """检查最少需要的关节点是否可见（至少一侧肩膀 + 一侧髋部）"""
-        has_shoulder = lm_vis(landmarks, KP["left_shoulder"], threshold=0.3) or lm_vis(
-            landmarks, KP["right_shoulder"], threshold=0.3
+        """检查当前 landmarks 是否满足最小人体存在门槛。"""
+        metrics = pose_presence_metrics(
+            landmarks,
+            threshold=self.presence_landmark_threshold,
+            margin=self.presence_in_frame_margin,
         )
-        has_hip = lm_vis(landmarks, KP["left_hip"], threshold=0.3) or lm_vis(
-            landmarks, KP["right_hip"], threshold=0.3
-        )
-        return has_shoulder and has_hip
+        if metrics["avg_core_vis"] < self.core_visibility_threshold:
+            return False
+        if metrics["core_visible_count"] < self.min_core_visible_count:
+            return False
+        if metrics["head_visible_count"] < self.min_head_visible_count:
+            return False
+        if not metrics["has_shoulder"] or not metrics["has_hip"]:
+            return False
+        if self.require_same_side_torso and not metrics["same_side_torso"]:
+            return False
+        if metrics["max_torso_span"] < self.min_torso_span:
+            return False
+        return True
 
     def _enter_detect_failed(self, now: float):
         """进入 DETECT_FAILED 状态：暂停所有计时器"""
@@ -737,6 +873,7 @@ class PoseStateMachine:
 
         # ═══ AWAY：检测不到人 ═══
         if landmarks is None:
+            self._present_frame_count = 0
             if self.state != PoseState.AWAY:
                 self._enter_away(now)
                 if not self._leave_voice_played:
@@ -760,6 +897,24 @@ class PoseStateMachine:
                 result["session_ended"] = self._pending_session
                 self._pending_session = None
             return result
+
+        required_presence_frames = max(int(self.presence_confirm_frames), 1)
+        if self.state in (PoseState.AWAY, PoseState.DETECT_FAILED):
+            self._present_frame_count += 1
+            if self._present_frame_count < required_presence_frames:
+                result["state"] = self.state
+                result["state_name"] = self.state.name
+                result["current_sitting_minutes"] = self._last_current_minutes
+                result["accumulated_sitting_minutes"] = self._last_accumulated_minutes
+                result["debug_info"] = (
+                    f"⏳ 人体确认中({self._present_frame_count}/{required_presence_frames})"
+                )
+                if self._pending_session is not None:
+                    result["session_ended"] = self._pending_session
+                    self._pending_session = None
+                return result
+        else:
+            self._present_frame_count = required_presence_frames
 
         # ═══ 从 AWAY 返回 ═══
         if self.state == PoseState.AWAY:
@@ -1225,8 +1380,16 @@ def main(args):
                 if used_fallback:
                     _diag_fallback_detected_frames += 1
 
-            # ── 骨骼绘制 ──────────────────────────────────────
-            if results.pose_landmarks:
+            lms = results.pose_landmarks.landmark if results.pose_landmarks else None
+
+            # ── 过滤低可见度的误检测（物体被误识为人）──
+            if lms is not None:
+                if not passes_pose_presence_gate(lms, cfg):
+                    _diag_core_filtered_frames += 1
+                    lms = None
+
+            # ── 骨骼绘制（仅绘制通过过滤的人体）──────────────────
+            if lms is not None and results.pose_landmarks:
                 mp_drawing.draw_landmarks(
                     frame,
                     results.pose_landmarks,
@@ -1234,21 +1397,6 @@ def main(args):
                     landmark_drawing_spec=landmark_spec,
                     connection_drawing_spec=connection_spec,
                 )
-
-            lms = results.pose_landmarks.landmark if results.pose_landmarks else None
-
-            # ── 过滤低可见度的误检测（物体被误识为人）──
-            if lms is not None:
-                _core = [
-                    KP["left_shoulder"],
-                    KP["right_shoulder"],
-                    KP["left_hip"],
-                    KP["right_hip"],
-                ]
-                avg_vis = sum(lms[i].visibility for i in _core) / len(_core)
-                if avg_vis < cfg["pose_core_visibility_threshold"]:
-                    _diag_core_filtered_frames += 1
-                    lms = None
 
             if args.diagnostics:
                 now_diag = time.time()

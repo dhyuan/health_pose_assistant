@@ -195,6 +195,48 @@ const FIELD_META_ZH: Record<string, FieldMeta> = {
       "左右肩 + 左右髋四个关节点平均可见度 < 此值 → 丢弃本帧结果（当作无人）。拦截背景物体被误识为人，即时生效。",
     tab: "advanced",
   },
+  pose_presence_landmark_threshold: {
+    label: "人体门槛单点可见度",
+    description:
+      "计算核心点数量、头部数量和同侧肩髋时使用的单点可见度阈值。越高越严格，即时生效。",
+    tab: "advanced",
+  },
+  pose_presence_in_frame_margin: {
+    label: "关键点画面边界容差",
+    description:
+      "关键点必须落在画面内或边界附近才算有效。调低可更严格拦截落到画面外的假骨架，即时生效。",
+    tab: "advanced",
+  },
+  pose_min_core_visible_count: {
+    label: "最少核心点数量",
+    description:
+      "左右肩 + 左右髋中，至少有多少个点可见才算人体。越高越能拦截桌椅误检，即时生效。",
+    tab: "advanced",
+  },
+  pose_min_head_visible_count: {
+    label: "最少头部点数量",
+    description:
+      "鼻子/眼睛/耳朵中，至少有多少个点可见才算人体。桌面和显示器误检通常在这里会失败，即时生效。",
+    tab: "advanced",
+  },
+  pose_require_same_side_torso: {
+    label: "要求同侧肩髋",
+    description:
+      "必须满足左肩+左髋或右肩+右髋同时可见，避免跨侧拼接出的假人体，即时生效。",
+    tab: "advanced",
+  },
+  pose_min_torso_span: {
+    label: "最小躯干跨度",
+    description:
+      "同侧肩髋的最小纵向距离。可拦截缩成一小团的假人体关键点，即时生效。",
+    tab: "advanced",
+  },
+  pose_presence_confirm_frames: {
+    label: "人体确认帧数",
+    description:
+      "从 AWAY/DETECT_FAILED 恢复前，连续多少帧满足人体门槛才确认有人。越高越能压制闪烁误检，即时生效。",
+    tab: "advanced",
+  },
 };
 
 const FIELD_META_EN: Record<string, FieldMeta> = {
@@ -344,6 +386,48 @@ const FIELD_META_EN: Record<string, FieldMeta> = {
     label: "Core joint visibility threshold",
     description:
       "Average visibility of both shoulders + both hips must exceed this value, otherwise the frame is discarded as no-person. Takes effect immediately.",
+    tab: "advanced",
+  },
+  pose_presence_landmark_threshold: {
+    label: "Presence landmark threshold",
+    description:
+      "Per-landmark visibility threshold used for core-count, head-count, and same-side torso checks. Higher = stricter. Takes effect immediately.",
+    tab: "advanced",
+  },
+  pose_presence_in_frame_margin: {
+    label: "In-frame landmark margin",
+    description:
+      "Landmarks must stay inside the frame or very close to its border to count as valid. Lower = stricter rejection of off-screen hallucinated points. Takes effect immediately.",
+    tab: "advanced",
+  },
+  pose_min_core_visible_count: {
+    label: "Minimum core landmark count",
+    description:
+      "Require at least this many visible landmarks across shoulders and hips before accepting a person. Takes effect immediately.",
+    tab: "advanced",
+  },
+  pose_min_head_visible_count: {
+    label: "Minimum head landmark count",
+    description:
+      "Require at least this many visible head landmarks across nose, eyes, and ears before accepting a person. Takes effect immediately.",
+    tab: "advanced",
+  },
+  pose_require_same_side_torso: {
+    label: "Require same-side torso",
+    description:
+      "Require either left shoulder+left hip or right shoulder+right hip to be visible together, preventing cross-side hallucinated torsos. Takes effect immediately.",
+    tab: "advanced",
+  },
+  pose_min_torso_span: {
+    label: "Minimum torso span",
+    description:
+      "Require a minimum vertical distance between same-side shoulder and hip, blocking tiny clustered hallucinated poses. Takes effect immediately.",
+    tab: "advanced",
+  },
+  pose_presence_confirm_frames: {
+    label: "Presence confirmation frames",
+    description:
+      "Require N consecutive frames that pass the person gate before leaving AWAY or DETECT_FAILED. Takes effect immediately.",
     tab: "advanced",
   },
 };
@@ -753,6 +837,13 @@ export default function SettingsPage() {
                 "pose_min_detection_confidence",
                 "pose_min_tracking_confidence",
                 "pose_core_visibility_threshold",
+                "pose_presence_landmark_threshold",
+                "pose_presence_in_frame_margin",
+                "pose_min_core_visible_count",
+                "pose_min_head_visible_count",
+                "pose_require_same_side_torso",
+                "pose_min_torso_span",
+                "pose_presence_confirm_frames",
               ].map(renderField)}
             </CardContent>
           </Card>
@@ -798,9 +889,25 @@ function getNumberRange(
   if (
     key === "pose_min_detection_confidence" ||
     key === "pose_min_tracking_confidence" ||
-    key === "pose_core_visibility_threshold"
+    key === "pose_core_visibility_threshold" ||
+    key === "pose_presence_landmark_threshold"
   ) {
     return { min: 0.1, max: 1.0, step: 0.05 };
+  }
+  if (key === "pose_presence_in_frame_margin") {
+    return { min: 0, max: 0.2, step: 0.01 };
+  }
+  if (key === "pose_min_core_visible_count") {
+    return { min: 1, max: 4, step: 1 };
+  }
+  if (key === "pose_min_head_visible_count") {
+    return { min: 0, max: 5, step: 1 };
+  }
+  if (key === "pose_min_torso_span") {
+    return { min: 0.05, max: 0.4, step: 0.01 };
+  }
+  if (key === "pose_presence_confirm_frames") {
+    return { min: 1, max: 10, step: 1 };
   }
   return { min: 0, max: Math.max(currentValue * 3, 100), step: 1 };
 }

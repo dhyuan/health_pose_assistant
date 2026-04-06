@@ -51,6 +51,13 @@ DEFAULT_CONFIG: dict = {
     "pose_min_detection_confidence": 0.5,
     "pose_min_tracking_confidence": 0.5,
     "pose_core_visibility_threshold": 0.5,
+    "pose_presence_landmark_threshold": 0.35,
+    "pose_presence_in_frame_margin": 0.02,
+    "pose_min_core_visible_count": 3,
+    "pose_min_head_visible_count": 1,
+    "pose_require_same_side_torso": True,
+    "pose_min_torso_span": 0.16,
+    "pose_presence_confirm_frames": 3,
     # Sit/stand thresholds (desk-side calibrated)
     "sitting_torso_span_threshold": 0.27,
     "sitting_hip_y_threshold": 0.44,

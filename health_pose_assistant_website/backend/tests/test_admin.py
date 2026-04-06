@@ -130,6 +130,9 @@ class TestAdminConfig:
         assert data["config_json"]["sitting_torso_span_threshold"] == 0.27
         assert data["config_json"]["sitting_hip_y_threshold"] == 0.44
         assert data["config_json"]["sitting_knee_strong_threshold"] == 110
+        assert data["config_json"]["pose_min_core_visible_count"] == 3
+        assert data["config_json"]["pose_require_same_side_torso"] is True
+        assert data["config_json"]["pose_min_torso_span"] == 0.16
 
     def test_reset_config_overwrites_and_increments_version(
         self, client, admin_headers, active_config
@@ -140,6 +143,8 @@ class TestAdminConfig:
         assert data["version"] == 2
         assert data["config_json"]["sitting_torso_span_threshold"] == 0.27
         assert data["config_json"]["sitting_hip_y_threshold"] == 0.44
+        assert data["config_json"]["pose_presence_in_frame_margin"] == 0.02
+        assert data["config_json"]["pose_presence_confirm_frames"] == 3
         assert "bad_posture_threshold" not in data["config_json"]
 
 

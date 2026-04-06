@@ -34,6 +34,14 @@ _SM_ATTR_MAP = {
     "sitting_alert_minutes": ("sitting_alert_seconds", lambda v: v * 60),
     "sitting_repeat_alert_minutes": ("sitting_repeat_seconds", lambda v: v * 60),
     "sitting_stand_seconds": "stand_clear_seconds",
+    "pose_core_visibility_threshold": "core_visibility_threshold",
+    "pose_presence_landmark_threshold": "presence_landmark_threshold",
+    "pose_presence_in_frame_margin": "presence_in_frame_margin",
+    "pose_min_core_visible_count": "min_core_visible_count",
+    "pose_min_head_visible_count": "min_head_visible_count",
+    "pose_require_same_side_torso": "require_same_side_torso",
+    "pose_min_torso_span": "min_torso_span",
+    "pose_presence_confirm_frames": "presence_confirm_frames",
     "sitting_torso_span_threshold": "span_threshold",
     "sitting_hip_y_threshold": "hip_y_thresh",
     "sitting_knee_angle_threshold": "knee_threshold",
@@ -67,6 +75,13 @@ _CFG_DIRECT_KEYS = {
     "pose_min_detection_confidence",
     "pose_min_tracking_confidence",
     "pose_core_visibility_threshold",
+    "pose_presence_landmark_threshold",
+    "pose_presence_in_frame_margin",
+    "pose_min_core_visible_count",
+    "pose_min_head_visible_count",
+    "pose_require_same_side_torso",
+    "pose_min_torso_span",
+    "pose_presence_confirm_frames",
 }
 
 
