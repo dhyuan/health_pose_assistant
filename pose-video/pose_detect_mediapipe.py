@@ -355,6 +355,17 @@ def bbox_iou(box_a, box_b) -> float:
     return inter_area / denom if denom > 0 else 0.0
 
 
+def union_bbox(*boxes):
+    valid_boxes = [box for box in boxes if box is not None]
+    if not valid_boxes:
+        return None
+    x1 = min(box[0] for box in valid_boxes)
+    y1 = min(box[1] for box in valid_boxes)
+    x2 = max(box[2] for box in valid_boxes)
+    y2 = max(box[3] for box in valid_boxes)
+    return (int(np.floor(x1)), int(np.floor(y1)), int(np.ceil(x2)), int(np.ceil(y2)))
+
+
 def expand_bbox(bbox, frame_shape, padding_ratio: float):
     frame_h, frame_w = frame_shape[:2]
     x1, y1, x2, y2 = bbox
@@ -383,17 +394,56 @@ def remap_pose_landmarks_to_frame(landmarks, crop_bbox, frame_shape):
         landmark.z *= depth_scale
 
 
+def landmark_bbox_from_pose(
+    landmarks,
+    frame_shape,
+    visibility_threshold: float = 0.35,
+    margin_ratio: float = 0.08,
+):
+    frame_h, frame_w = frame_shape[:2]
+    points = []
+    for idx, landmark in enumerate(landmarks):
+        if landmark.visibility < visibility_threshold:
+            continue
+        if not lm_in_frame(landmarks, idx, margin=0.08):
+            continue
+        points.append((landmark.x * frame_w, landmark.y * frame_h))
+
+    if len(points) < 4:
+        return None
+
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    x1 = min(xs)
+    y1 = min(ys)
+    x2 = max(xs)
+    y2 = max(ys)
+    box_w = max(x2 - x1, 1.0)
+    box_h = max(y2 - y1, 1.0)
+    pad_x = box_w * margin_ratio
+    pad_y = box_h * margin_ratio
+    x1 = max(int(np.floor(x1 - pad_x)), 0)
+    y1 = max(int(np.floor(y1 - pad_y)), 0)
+    x2 = min(int(np.ceil(x2 + pad_x)), frame_w)
+    y2 = min(int(np.ceil(y2 + pad_y)), frame_h)
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return (x1, y1, x2, y2)
+
+
 def run_pose_with_fallback(pose, frame_bgr: np.ndarray):
-    rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    frame_bgr = np.ascontiguousarray(frame_bgr)
+    rgb = np.ascontiguousarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
     rgb.flags.writeable = False
     results = pose.process(rgb)
     rgb.flags.writeable = True
 
     used_fallback = False
     if not results.pose_landmarks:
-        frame_bgr.flags.writeable = False
-        fallback_results = pose.process(frame_bgr)
-        frame_bgr.flags.writeable = True
+        fallback_bgr = np.ascontiguousarray(frame_bgr)
+        fallback_bgr.flags.writeable = False
+        fallback_results = pose.process(fallback_bgr)
+        fallback_bgr.flags.writeable = True
         if fallback_results.pose_landmarks:
             results = fallback_results
             used_fallback = True
@@ -416,6 +466,20 @@ class PersonBBoxTracker:
         self._candidate_hits = 0
         self._confirmed_bbox = None
         self._confirmed_conf = 0.0
+        self._lost_count = 0
+
+    def override_confirmed_bbox(self, bbox, confidence: float | None = None):
+        self._confirmed_bbox = bbox
+        if confidence is not None:
+            self._confirmed_conf = confidence
+        self._lost_count = 0
+
+    def merge_confirmed_bbox(self, *boxes, confidence: float | None = None):
+        merged_bbox = union_bbox(self._confirmed_bbox, *boxes)
+        if merged_bbox is not None:
+            self._confirmed_bbox = merged_bbox
+        if confidence is not None:
+            self._confirmed_conf = confidence
         self._lost_count = 0
 
     def _ensure_model(self):
@@ -540,11 +604,12 @@ class PersonBBoxTracker:
                 else:
                     info["status"] = "candidate"
             else:
-                self._confirmed_bbox = raw_bbox
-                self._confirmed_conf = raw_detection["confidence"]
-                self._lost_count = 0
+                self.merge_confirmed_bbox(
+                    raw_bbox,
+                    confidence=raw_detection["confidence"],
+                )
                 info["status"] = "confirmed"
-                info["fallback_reason"] = "using_bbox"
+                info["fallback_reason"] = "merged_raw_bbox"
         else:
             self._candidate_bbox = None
             self._candidate_hits = 0
@@ -1429,44 +1494,52 @@ def draw_overlay(frame, sm_result: dict, exercise: dict, fps: float, cfg: dict):
     if cfg["enable_sitting"]:
         current_mins = sm_result.get("current_sitting_minutes", 0.0)
         accumulated_mins = sm_result.get("accumulated_sitting_minutes", 0.0)
+        bottom_main_y = h - 100
+        bottom_votes_y = h - 90
+        bottom_features_y = h - 70
+        bottom_features2_y = h - 50
 
         if sm_result["alert_sitting"]:
             put(
                 f"[!] STAND UP! Now: {current_mins:.1f}min | Total: {accumulated_mins:.1f}min",
-                h - 60,
+                bottom_main_y,
                 (0, 0, 255),
             )
         elif sm_result["is_sitting"]:
             put(
                 f"Sitting - Now: {current_mins:.1f}min | Total: {accumulated_mins:.1f}min",
-                h - 60,
+                bottom_main_y,
                 (0, 220, 220),
             )
         elif state_name == "DETECT_FAILED":
             put(
                 f"检测中断 | Total: {accumulated_mins:.1f}min",
-                h - 60,
+                bottom_main_y,
                 (0, 165, 255),
             )
         elif state_name == "AWAY":
             put(
                 f"离开 | Total: {accumulated_mins:.1f}min",
-                h - 60,
+                bottom_main_y,
                 (180, 180, 180),
             )
         else:
-            put(f"Standing | Total: {accumulated_mins:.1f}min", h - 60, (0, 220, 0))
+            put(
+                f"Standing | Total: {accumulated_mins:.1f}min",
+                bottom_main_y,
+                (0, 220, 0),
+            )
 
         votes_str = sm_result.get("votes", "")
         if votes_str:
-            put_small(f"  Votes: {votes_str}", h - 50)
+            put_small(f"  Votes: {votes_str}", bottom_votes_y)
 
         debug_info = sm_result.get("debug_info", "")
         if debug_info:
             lines = debug_info.split("\n")
-            put_small(f"  Features: {lines[0]}", h - 30)
+            put_small(f"  Features: {lines[0]}", bottom_features_y)
             if len(lines) > 1 and lines[1]:
-                put_small(f"  Features: {lines[1]}", h - 10)
+                put_small(f"  Features: {lines[1]}", bottom_features2_y)
 
     # 写回 frame
     frame[:] = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
@@ -1765,8 +1838,6 @@ def main(args):
                                 pose, cropped_frame
                             )
                             bbox_info["source"] = "bbox"
-                            bbox_info["active_bbox"] = padded_bbox
-                            bbox_info["draw_bbox"] = padded_bbox
                             bbox_info["used_pose_fallback"] = used_fallback
                             if results.pose_landmarks:
                                 remap_pose_landmarks_to_frame(
@@ -1774,6 +1845,31 @@ def main(args):
                                     padded_bbox,
                                     frame.shape,
                                 )
+                                refined_bbox = landmark_bbox_from_pose(
+                                    results.pose_landmarks.landmark,
+                                    frame.shape,
+                                    visibility_threshold=cfg.get(
+                                        "pose_presence_landmark_threshold", 0.35
+                                    ),
+                                    margin_ratio=max(
+                                        cfg.get("pose_bbox_padding_ratio", 0.12) * 0.5,
+                                        0.05,
+                                    ),
+                                )
+                                if refined_bbox is not None:
+                                    merged_bbox = union_bbox(
+                                        bbox_info.get("active_bbox"),
+                                        bbox_info.get("raw_bbox"),
+                                        refined_bbox,
+                                    )
+                                    bbox_tracker.merge_confirmed_bbox(
+                                        bbox_info.get("raw_bbox"),
+                                        refined_bbox,
+                                        confidence=bbox_info.get("confidence"),
+                                    )
+                                    bbox_info["active_bbox"] = merged_bbox
+                                    bbox_info["draw_bbox"] = merged_bbox
+                                    bbox_info["fallback_reason"] = "pose_union_bbox"
                             elif cfg.get("pose_bbox_fallback_to_full_frame", True):
                                 results, used_fallback = run_pose_with_fallback(
                                     pose, frame
