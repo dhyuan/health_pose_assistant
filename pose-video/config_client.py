@@ -82,6 +82,13 @@ _CFG_DIRECT_KEYS = {
     "pose_require_same_side_torso",
     "pose_min_torso_span",
     "pose_presence_confirm_frames",
+    "pose_bbox_first_enabled",
+    "pose_bbox_confidence_threshold",
+    "pose_bbox_padding_ratio",
+    "pose_bbox_min_area_ratio",
+    "pose_bbox_confirm_frames",
+    "pose_bbox_lost_frames",
+    "pose_bbox_fallback_to_full_frame",
 }
 
 

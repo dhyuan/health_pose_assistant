@@ -58,6 +58,13 @@ DEFAULT_CONFIG: dict = {
     "pose_require_same_side_torso": True,
     "pose_min_torso_span": 0.16,
     "pose_presence_confirm_frames": 3,
+    "pose_bbox_first_enabled": False,
+    "pose_bbox_confidence_threshold": 0.35,
+    "pose_bbox_padding_ratio": 0.12,
+    "pose_bbox_min_area_ratio": 0.02,
+    "pose_bbox_confirm_frames": 2,
+    "pose_bbox_lost_frames": 5,
+    "pose_bbox_fallback_to_full_frame": True,
     # Sit/stand thresholds (desk-side calibrated)
     "sitting_torso_span_threshold": 0.27,
     "sitting_hip_y_threshold": 0.44,

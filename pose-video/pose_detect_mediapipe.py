@@ -8,7 +8,7 @@ Mac 端接收 Pi 视频流，使用 MediaPipe Pose 实时检测：
   3. 久坐提醒 + 语音播报
 
 依赖安装:
-    pip install opencv-python mediapipe numpy
+    pip install opencv-python mediapipe numpy Pillow requests ultralytics
 
 用法:
     python3 pose_detect_mediapipe.py            # 等待 Pi 连接（默认端口 9999）
@@ -29,6 +29,7 @@ import threading
 import time
 import warnings
 from enum import Enum, auto
+
 import cv2
 
 warnings.filterwarnings(
@@ -43,6 +44,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
+YOLO_PERSON_CLASS_ID = 0
 
 # ── 中文字体（用于 PIL 绘制） ──
 try:
@@ -76,6 +78,13 @@ CONFIG = {
     "pose_require_same_side_torso": True,
     "pose_min_torso_span": 0.16,
     "pose_presence_confirm_frames": 3,
+    "pose_bbox_first_enabled": False,
+    "pose_bbox_confidence_threshold": 0.35,
+    "pose_bbox_padding_ratio": 0.12,
+    "pose_bbox_min_area_ratio": 0.02,
+    "pose_bbox_confirm_frames": 2,
+    "pose_bbox_lost_frames": 5,
+    "pose_bbox_fallback_to_full_frame": True,
     # ── 坐姿检测 ──────────────────────────────────────────────
     "posture_torso_threshold": 145,  # 躯干角 < 此值 → 驼背警告（度）。
     "posture_head_forward_threshold": 0.05,  # 头部前倾阈值（鼻子相对肩膀的x位移 > 此值 → 头部前倾）
@@ -162,6 +171,33 @@ HEAD_KPS = [
     KP["left_ear"],
     KP["right_ear"],
 ]
+
+LEFT_KPS = {
+    KP["left_eye"],
+    KP["left_ear"],
+    KP["left_shoulder"],
+    KP["left_elbow"],
+    KP["left_wrist"],
+    KP["left_hip"],
+    KP["left_knee"],
+    KP["left_ankle"],
+}
+
+RIGHT_KPS = {
+    KP["right_eye"],
+    KP["right_ear"],
+    KP["right_shoulder"],
+    KP["right_elbow"],
+    KP["right_wrist"],
+    KP["right_hip"],
+    KP["right_knee"],
+    KP["right_ankle"],
+}
+
+LANDMARK_LEFT_COLOR = (0, 165, 255)
+LANDMARK_RIGHT_COLOR = (255, 120, 0)
+LANDMARK_CENTER_COLOR = (220, 220, 220)
+CONNECTION_CROSS_COLOR = (80, 220, 80)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -299,6 +335,343 @@ def rotate_frame(frame: np.ndarray, angle: int) -> np.ndarray:
         rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
         rotated = cv2.warpAffine(frame, rotation_matrix, (w, h))
         return rotated
+
+
+def bbox_iou(box_a, box_b) -> float:
+    ax1, ay1, ax2, ay2 = box_a
+    bx1, by1, bx2, by2 = box_b
+    inter_x1 = max(ax1, bx1)
+    inter_y1 = max(ay1, by1)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+    inter_w = max(0.0, inter_x2 - inter_x1)
+    inter_h = max(0.0, inter_y2 - inter_y1)
+    inter_area = inter_w * inter_h
+    if inter_area <= 0:
+        return 0.0
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    denom = area_a + area_b - inter_area
+    return inter_area / denom if denom > 0 else 0.0
+
+
+def expand_bbox(bbox, frame_shape, padding_ratio: float):
+    frame_h, frame_w = frame_shape[:2]
+    x1, y1, x2, y2 = bbox
+    box_w = x2 - x1
+    box_h = y2 - y1
+    pad_x = box_w * padding_ratio
+    pad_y = box_h * padding_ratio
+    x1 = max(int(np.floor(x1 - pad_x)), 0)
+    y1 = max(int(np.floor(y1 - pad_y)), 0)
+    x2 = min(int(np.ceil(x2 + pad_x)), frame_w)
+    y2 = min(int(np.ceil(y2 + pad_y)), frame_h)
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return (x1, y1, x2, y2)
+
+
+def remap_pose_landmarks_to_frame(landmarks, crop_bbox, frame_shape):
+    frame_h, frame_w = frame_shape[:2]
+    x1, y1, x2, y2 = crop_bbox
+    crop_w = max(x2 - x1, 1)
+    crop_h = max(y2 - y1, 1)
+    depth_scale = max(crop_w / max(frame_w, 1), crop_h / max(frame_h, 1))
+    for landmark in landmarks:
+        landmark.x = (x1 + landmark.x * crop_w) / frame_w
+        landmark.y = (y1 + landmark.y * crop_h) / frame_h
+        landmark.z *= depth_scale
+
+
+def run_pose_with_fallback(pose, frame_bgr: np.ndarray):
+    rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    rgb.flags.writeable = False
+    results = pose.process(rgb)
+    rgb.flags.writeable = True
+
+    used_fallback = False
+    if not results.pose_landmarks:
+        frame_bgr.flags.writeable = False
+        fallback_results = pose.process(frame_bgr)
+        frame_bgr.flags.writeable = True
+        if fallback_results.pose_landmarks:
+            results = fallback_results
+            used_fallback = True
+    return results, used_fallback
+
+
+class PersonBBoxTracker:
+    def __init__(self, model_name: str = "yolo11n.pt"):
+        self._model_name = model_name
+        self._model = None
+        self._load_failed = False
+        self._candidate_bbox = None
+        self._candidate_hits = 0
+        self._confirmed_bbox = None
+        self._confirmed_conf = 0.0
+        self._lost_count = 0
+
+    def reset(self):
+        self._candidate_bbox = None
+        self._candidate_hits = 0
+        self._confirmed_bbox = None
+        self._confirmed_conf = 0.0
+        self._lost_count = 0
+
+    def _ensure_model(self):
+        if self._load_failed:
+            return None
+        if self._model is not None:
+            return self._model
+        try:
+            from ultralytics import YOLO
+
+            self._model = YOLO(self._model_name)
+            logger.info("Loaded person detector model %s", self._model_name)
+        except Exception:
+            self._load_failed = True
+            logger.warning(
+                "Failed to initialize YOLO person detector; bbox-first mode will fall back",
+                exc_info=True,
+            )
+            return None
+        return self._model
+
+    def _detect_raw_bbox(self, frame: np.ndarray, cfg: dict):
+        model = self._ensure_model()
+        if model is None:
+            return None, "model_unavailable"
+
+        frame_h, frame_w = frame.shape[:2]
+        min_area_ratio = cfg.get("pose_bbox_min_area_ratio", 0.02)
+        conf_threshold = cfg.get("pose_bbox_confidence_threshold", 0.35)
+        try:
+            prediction = model.predict(
+                source=frame,
+                conf=conf_threshold,
+                classes=[YOLO_PERSON_CLASS_ID],
+                verbose=False,
+            )[0]
+        except Exception:
+            logger.warning(
+                "YOLO person detection failed on current frame", exc_info=True
+            )
+            return None, "detect_error"
+
+        boxes = getattr(prediction, "boxes", None)
+        if boxes is None or len(boxes) == 0:
+            return None, "no_person"
+
+        best = None
+        frame_area = max(frame_w * frame_h, 1)
+        for box in boxes:
+            cls_id = int(box.cls[0].item()) if box.cls is not None else -1
+            if cls_id != YOLO_PERSON_CLASS_ID:
+                continue
+            conf = float(box.conf[0].item()) if box.conf is not None else 0.0
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            width = max(0.0, x2 - x1)
+            height = max(0.0, y2 - y1)
+            area_ratio = (width * height) / frame_area
+            if area_ratio < min_area_ratio:
+                continue
+            candidate = {
+                "bbox": (x1, y1, x2, y2),
+                "confidence": conf,
+                "area_ratio": area_ratio,
+            }
+            if best is None or candidate["area_ratio"] > best["area_ratio"]:
+                best = candidate
+
+        if best is None:
+            return None, "below_min_area"
+        return best, "detected"
+
+    def update(self, frame: np.ndarray, cfg: dict) -> dict:
+        info = {
+            "enabled": cfg.get("pose_bbox_first_enabled", False),
+            "status": "disabled",
+            "source": "full_frame",
+            "raw_bbox": None,
+            "active_bbox": None,
+            "draw_bbox": None,
+            "confidence": None,
+            "area_ratio": None,
+            "candidate_hits": self._candidate_hits,
+            "confirm_frames": max(int(cfg.get("pose_bbox_confirm_frames", 2)), 1),
+            "lost_count": self._lost_count,
+            "lost_frames": max(int(cfg.get("pose_bbox_lost_frames", 5)), 0),
+            "fallback_reason": "disabled",
+            "used_pose_fallback": False,
+        }
+
+        if not info["enabled"]:
+            self.reset()
+            return info
+
+        raw_detection, status = self._detect_raw_bbox(frame, cfg)
+        info["status"] = status
+        info["fallback_reason"] = status
+
+        if raw_detection is not None:
+            raw_bbox = raw_detection["bbox"]
+            info["raw_bbox"] = raw_bbox
+            info["confidence"] = raw_detection["confidence"]
+            info["area_ratio"] = raw_detection["area_ratio"]
+
+            if (
+                self._candidate_bbox is None
+                or bbox_iou(self._candidate_bbox, raw_bbox) < 0.5
+            ):
+                self._candidate_bbox = raw_bbox
+                self._candidate_hits = 1
+            else:
+                self._candidate_bbox = raw_bbox
+                self._candidate_hits += 1
+
+            confirm_frames = info["confirm_frames"]
+            if self._confirmed_bbox is None:
+                if self._candidate_hits >= confirm_frames:
+                    self._confirmed_bbox = raw_bbox
+                    self._confirmed_conf = raw_detection["confidence"]
+                    self._lost_count = 0
+                    info["status"] = "confirmed"
+                    info["fallback_reason"] = "using_bbox"
+                else:
+                    info["status"] = "candidate"
+            else:
+                self._confirmed_bbox = raw_bbox
+                self._confirmed_conf = raw_detection["confidence"]
+                self._lost_count = 0
+                info["status"] = "confirmed"
+                info["fallback_reason"] = "using_bbox"
+        else:
+            self._candidate_bbox = None
+            self._candidate_hits = 0
+            if (
+                self._confirmed_bbox is not None
+                and self._lost_count < info["lost_frames"]
+            ):
+                self._lost_count += 1
+                info["status"] = "holding"
+                info["fallback_reason"] = "holding_last_bbox"
+            else:
+                self._confirmed_bbox = None
+                self._confirmed_conf = 0.0
+                self._lost_count = 0
+
+        info["candidate_hits"] = self._candidate_hits
+        info["lost_count"] = self._lost_count
+        info["active_bbox"] = self._confirmed_bbox
+        info["draw_bbox"] = self._confirmed_bbox or info["raw_bbox"]
+        if info["confidence"] is None and self._confirmed_bbox is not None:
+            info["confidence"] = self._confirmed_conf
+        return info
+
+
+def _bbox_status_color(status: str):
+    if status == "confirmed":
+        return (0, 220, 0)
+    if status == "holding":
+        return (0, 200, 255)
+    return (0, 140, 255)
+
+
+def draw_bbox_overlay(frame, bbox_info: dict, diagnostics: bool = False):
+    draw_bbox = bbox_info.get("draw_bbox")
+    if draw_bbox is not None:
+        x1, y1, x2, y2 = [int(v) for v in draw_bbox]
+        status = bbox_info.get("status", "disabled")
+        color = _bbox_status_color(status)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+        label = f"person {status}"
+        confidence = bbox_info.get("confidence")
+        if confidence is not None:
+            label += f" {confidence:.2f}"
+        cv2.putText(
+            frame,
+            label,
+            (x1, max(y1 - 8, 18)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.52,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
+
+    if not diagnostics:
+        return
+
+    lines = [
+        f"BBox: {bbox_info.get('status', 'disabled')} src={bbox_info.get('source', 'full_frame')}",
+        (
+            f"conf={bbox_info['confidence']:.2f} area={bbox_info['area_ratio']:.3f} "
+            if bbox_info.get("confidence") is not None
+            and bbox_info.get("area_ratio") is not None
+            else "conf=N/A area=N/A "
+        )
+        + f"confirm={bbox_info.get('candidate_hits', 0)}/{bbox_info.get('confirm_frames', 1)}",
+        f"lost={bbox_info.get('lost_count', 0)}/{bbox_info.get('lost_frames', 0)} reason={bbox_info.get('fallback_reason', '-')}",
+    ]
+    x = 10
+    y = 22
+    for line in lines:
+        cv2.putText(
+            frame,
+            line,
+            (x, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.48,
+            (30, 30, 30),
+            3,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            line,
+            (x, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.48,
+            (230, 230, 230),
+            1,
+            cv2.LINE_AA,
+        )
+        y += 18
+
+
+def draw_pose_landmarks_colored(frame, landmarks, pose_connections):
+    frame_h, frame_w = frame.shape[:2]
+
+    def point_xy(index: int):
+        landmark = landmarks[index]
+        return int(landmark.x * frame_w), int(landmark.y * frame_h)
+
+    def point_visible(index: int):
+        landmark = landmarks[index]
+        return landmark.visibility > 0.35 and lm_in_frame(landmarks, index, margin=0.08)
+
+    for start_idx, end_idx in pose_connections:
+        if not point_visible(start_idx) or not point_visible(end_idx):
+            continue
+        if start_idx in LEFT_KPS and end_idx in LEFT_KPS:
+            color = LANDMARK_LEFT_COLOR
+        elif start_idx in RIGHT_KPS and end_idx in RIGHT_KPS:
+            color = LANDMARK_RIGHT_COLOR
+        else:
+            color = CONNECTION_CROSS_COLOR
+        cv2.line(frame, point_xy(start_idx), point_xy(end_idx), color, 2, cv2.LINE_AA)
+
+    for idx, landmark in enumerate(landmarks):
+        if landmark.visibility <= 0.35 or not lm_in_frame(landmarks, idx, margin=0.08):
+            continue
+        if idx in LEFT_KPS:
+            color = LANDMARK_LEFT_COLOR
+        elif idx in RIGHT_KPS:
+            color = LANDMARK_RIGHT_COLOR
+        else:
+            color = LANDMARK_CENTER_COLOR
+        cv2.circle(frame, point_xy(idx), 4, (20, 20, 20), -1, cv2.LINE_AA)
+        cv2.circle(frame, point_xy(idx), 3, color, -1, cv2.LINE_AA)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1274,6 +1647,7 @@ def main(args):
 
     state_machine = PoseStateMachine(cfg)
     exercise_ctr = ExerciseCounter(cfg)
+    bbox_tracker = PersonBBoxTracker()
 
     # ── 后端集成（仅当 --api-url 和 --device-token 都提供时启用）──
     event_reporter = None
@@ -1323,13 +1697,6 @@ def main(args):
         config_client.sync_initial()
 
     mp_pose = mp.solutions.pose
-    mp_drawing = mp.solutions.drawing_utils
-    landmark_spec = mp_drawing.DrawingSpec(
-        color=(0, 255, 255), thickness=2, circle_radius=2
-    )
-    connection_spec = mp_drawing.DrawingSpec(
-        color=(0, 255, 0), thickness=2, circle_radius=2
-    )
 
     fps_counter, fps_start, current_fps = 0, time.time(), 0.0
     _alert_proc = None  # 记录 say 进程，上一句播完才播下一句
@@ -1338,6 +1705,10 @@ def main(args):
     _diag_pose_detected_frames = 0
     _diag_fallback_detected_frames = 0
     _diag_core_filtered_frames = 0
+    _diag_bbox_detected_frames = 0
+    _diag_bbox_confirmed_frames = 0
+    _diag_bbox_hold_frames = 0
+    _diag_bbox_full_frame_fallbacks = 0
     _diag_last_ts = time.time()
     _diag_luma_sum = 0.0
 
@@ -1358,29 +1729,98 @@ def main(args):
             _diag_total_frames += 1
             # 先旋转再推理，避免相机倒置导致检测率接近 0。
             frame = rotate_frame(frame, cfg["video_rotation_angle"])
-            # ── MediaPipe 推理 ────────────────────────────────
             _diag_luma_sum += float(np.mean(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)))
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            rgb.flags.writeable = False
-            results = pose.process(rgb)
-            rgb.flags.writeable = True
-
-            # 某些 Pi 流可能出现通道顺序异常：首轮失败时回退再试一次。
+            bbox_info = {
+                "enabled": False,
+                "status": "disabled",
+                "source": "full_frame",
+                "fallback_reason": "disabled",
+                "used_pose_fallback": False,
+            }
+            results = None
             used_fallback = False
-            if not results.pose_landmarks:
-                frame.flags.writeable = False
-                fallback_results = pose.process(frame)
-                frame.flags.writeable = True
-                if fallback_results.pose_landmarks:
-                    results = fallback_results
-                    used_fallback = True
 
-            if results.pose_landmarks:
+            if cfg.get("pose_bbox_first_enabled", False):
+                bbox_info = bbox_tracker.update(frame, cfg)
+                raw_bbox = bbox_info.get("raw_bbox")
+                if raw_bbox is not None:
+                    _diag_bbox_detected_frames += 1
+                if bbox_info.get("status") == "confirmed":
+                    _diag_bbox_confirmed_frames += 1
+                elif bbox_info.get("status") == "holding":
+                    _diag_bbox_hold_frames += 1
+
+                active_bbox = bbox_info.get("active_bbox")
+                if active_bbox is not None:
+                    padded_bbox = expand_bbox(
+                        active_bbox,
+                        frame.shape,
+                        cfg.get("pose_bbox_padding_ratio", 0.12),
+                    )
+                    if padded_bbox is not None:
+                        x1, y1, x2, y2 = padded_bbox
+                        cropped_frame = frame[y1:y2, x1:x2]
+                        if cropped_frame.size > 0:
+                            results, used_fallback = run_pose_with_fallback(
+                                pose, cropped_frame
+                            )
+                            bbox_info["source"] = "bbox"
+                            bbox_info["active_bbox"] = padded_bbox
+                            bbox_info["draw_bbox"] = padded_bbox
+                            bbox_info["used_pose_fallback"] = used_fallback
+                            if results.pose_landmarks:
+                                remap_pose_landmarks_to_frame(
+                                    results.pose_landmarks.landmark,
+                                    padded_bbox,
+                                    frame.shape,
+                                )
+                            elif cfg.get("pose_bbox_fallback_to_full_frame", True):
+                                results, used_fallback = run_pose_with_fallback(
+                                    pose, frame
+                                )
+                                bbox_info["source"] = "full_frame_fallback"
+                                bbox_info["fallback_reason"] = "crop_pose_failed"
+                                bbox_info["used_pose_fallback"] = used_fallback
+                                _diag_bbox_full_frame_fallbacks += 1
+                            else:
+                                bbox_info["source"] = "none"
+                        elif cfg.get("pose_bbox_fallback_to_full_frame", True):
+                            results, used_fallback = run_pose_with_fallback(pose, frame)
+                            bbox_info["source"] = "full_frame_fallback"
+                            bbox_info["fallback_reason"] = "invalid_crop"
+                            bbox_info["used_pose_fallback"] = used_fallback
+                            _diag_bbox_full_frame_fallbacks += 1
+                        else:
+                            bbox_info["source"] = "none"
+                    elif cfg.get("pose_bbox_fallback_to_full_frame", True):
+                        results, used_fallback = run_pose_with_fallback(pose, frame)
+                        bbox_info["source"] = "full_frame_fallback"
+                        bbox_info["fallback_reason"] = "invalid_bbox"
+                        bbox_info["used_pose_fallback"] = used_fallback
+                        _diag_bbox_full_frame_fallbacks += 1
+                    else:
+                        bbox_info["source"] = "none"
+                elif cfg.get("pose_bbox_fallback_to_full_frame", True):
+                    results, used_fallback = run_pose_with_fallback(pose, frame)
+                    bbox_info["source"] = "full_frame_fallback"
+                    bbox_info["used_pose_fallback"] = used_fallback
+                    _diag_bbox_full_frame_fallbacks += 1
+                else:
+                    bbox_info["source"] = "none"
+            else:
+                bbox_tracker.reset()
+                results, used_fallback = run_pose_with_fallback(pose, frame)
+
+            if results is not None and results.pose_landmarks:
                 _diag_pose_detected_frames += 1
                 if used_fallback:
                     _diag_fallback_detected_frames += 1
 
-            lms = results.pose_landmarks.landmark if results.pose_landmarks else None
+            lms = (
+                results.pose_landmarks.landmark
+                if results is not None and results.pose_landmarks
+                else None
+            )
 
             # ── 过滤低可见度的误检测（物体被误识为人）──
             if lms is not None:
@@ -1389,13 +1829,11 @@ def main(args):
                     lms = None
 
             # ── 骨骼绘制（仅绘制通过过滤的人体）──────────────────
-            if lms is not None and results.pose_landmarks:
-                mp_drawing.draw_landmarks(
+            if lms is not None and results is not None and results.pose_landmarks:
+                draw_pose_landmarks_colored(
                     frame,
-                    results.pose_landmarks,
+                    results.pose_landmarks.landmark,
                     mp_pose.POSE_CONNECTIONS,
-                    landmark_drawing_spec=landmark_spec,
-                    connection_drawing_spec=connection_spec,
                 )
 
             if args.diagnostics:
@@ -1408,7 +1846,7 @@ def main(args):
                         _diag_pose_detected_frames, 1
                     )
                     logger.info(
-                        "Diag: frames=%d detect_rate=%.1f%% fallback_hits=%d core_filtered=%.1f%% avg_luma=%.1f conf(det=%.2f, track=%.2f, vis=%.2f)",
+                        "Diag: frames=%d detect_rate=%.1f%% fallback_hits=%d core_filtered=%.1f%% avg_luma=%.1f conf(det=%.2f, track=%.2f, vis=%.2f) bbox(raw=%d confirmed=%d hold=%d full_fallback=%d enabled=%s)",
                         _diag_total_frames,
                         detect_rate * 100,
                         _diag_fallback_detected_frames,
@@ -1417,11 +1855,20 @@ def main(args):
                         cfg["pose_min_detection_confidence"],
                         cfg["pose_min_tracking_confidence"],
                         cfg["pose_core_visibility_threshold"],
+                        _diag_bbox_detected_frames,
+                        _diag_bbox_confirmed_frames,
+                        _diag_bbox_hold_frames,
+                        _diag_bbox_full_frame_fallbacks,
+                        cfg.get("pose_bbox_first_enabled", False),
                     )
                     _diag_total_frames = 0
                     _diag_pose_detected_frames = 0
                     _diag_fallback_detected_frames = 0
                     _diag_core_filtered_frames = 0
+                    _diag_bbox_detected_frames = 0
+                    _diag_bbox_confirmed_frames = 0
+                    _diag_bbox_hold_frames = 0
+                    _diag_bbox_full_frame_fallbacks = 0
                     _diag_luma_sum = 0.0
                     _diag_last_ts = now_diag
 
@@ -1494,6 +1941,8 @@ def main(args):
                         state_machine._leave_voice_played = False
 
             # ── 画面叠加 ──────────────────────────────────────
+            if bbox_info.get("enabled") and bbox_info.get("draw_bbox") is not None:
+                draw_bbox_overlay(frame, bbox_info, diagnostics=args.diagnostics)
             draw_overlay(frame, sm_result, exercise, current_fps, cfg)
 
             # ── MJPEG 推流 ────────────────────────────────────

@@ -237,6 +237,48 @@ const FIELD_META_ZH: Record<string, FieldMeta> = {
       "从 AWAY/DETECT_FAILED 恢复前，连续多少帧满足人体门槛才确认有人。越高越能压制闪烁误检，即时生效。",
     tab: "advanced",
   },
+  pose_bbox_first_enabled: {
+    label: "启用人体框预检测",
+    description:
+      "先用 YOLO11n 检测 person bbox，再只在 bbox 内跑 MediaPipe Pose。关闭时保持当前全图 Pose 流程。",
+    tab: "advanced",
+  },
+  pose_bbox_confidence_threshold: {
+    label: "BBox 检测置信度",
+    description:
+      "YOLO11n person 检测的最低置信度。越高越保守，越低越容易在复杂背景下误检。即时生效。",
+    tab: "advanced",
+  },
+  pose_bbox_padding_ratio: {
+    label: "BBox 扩边比例",
+    description:
+      "在 person bbox 四周额外扩多少比例再送入 MediaPipe Pose，避免裁切掉手臂或头部。即时生效。",
+    tab: "advanced",
+  },
+  pose_bbox_min_area_ratio: {
+    label: "BBox 最小面积占比",
+    description:
+      "person bbox 面积必须达到整帧的最小占比才会被接受，用于过滤远处或碎片化误检。即时生效。",
+    tab: "advanced",
+  },
+  pose_bbox_confirm_frames: {
+    label: "BBox 确认帧数",
+    description:
+      "连续多少帧检测到相近 bbox 后才正式切到 bbox-first 推理，抑制闪烁式误检。即时生效。",
+    tab: "advanced",
+  },
+  pose_bbox_lost_frames: {
+    label: "BBox 丢失保留帧数",
+    description:
+      "确认后的 bbox 最多允许连续丢失多少帧仍沿用上一次位置，减少短时抖动。即时生效。",
+    tab: "advanced",
+  },
+  pose_bbox_fallback_to_full_frame: {
+    label: "BBox 失败时回退全图 Pose",
+    description:
+      "当 YOLO11n 没找到稳定 bbox 或 crop 内 Pose 失败时，是否回退到原有 full-frame Pose。即时生效。",
+    tab: "advanced",
+  },
 };
 
 const FIELD_META_EN: Record<string, FieldMeta> = {
@@ -428,6 +470,48 @@ const FIELD_META_EN: Record<string, FieldMeta> = {
     label: "Presence confirmation frames",
     description:
       "Require N consecutive frames that pass the person gate before leaving AWAY or DETECT_FAILED. Takes effect immediately.",
+    tab: "advanced",
+  },
+  pose_bbox_first_enabled: {
+    label: "Enable bbox-first detection",
+    description:
+      "Run YOLO11n person detection first and only run MediaPipe Pose inside the detected bbox. Disable to keep the current full-frame Pose pipeline.",
+    tab: "advanced",
+  },
+  pose_bbox_confidence_threshold: {
+    label: "BBox detection confidence",
+    description:
+      "Minimum YOLO11n confidence for accepting a person bbox. Higher is stricter; lower is more permissive. Takes effect immediately.",
+    tab: "advanced",
+  },
+  pose_bbox_padding_ratio: {
+    label: "BBox padding ratio",
+    description:
+      "Extra padding applied around the detected bbox before cropping for MediaPipe Pose, preventing tight crops from cutting off body parts. Takes effect immediately.",
+    tab: "advanced",
+  },
+  pose_bbox_min_area_ratio: {
+    label: "Minimum bbox area ratio",
+    description:
+      "Require the detected person bbox to occupy at least this fraction of the full frame, filtering tiny false positives. Takes effect immediately.",
+    tab: "advanced",
+  },
+  pose_bbox_confirm_frames: {
+    label: "BBox confirmation frames",
+    description:
+      "Require N consecutive similar detections before switching to bbox-first inference, reducing flicker. Takes effect immediately.",
+    tab: "advanced",
+  },
+  pose_bbox_lost_frames: {
+    label: "BBox lost-frame hold",
+    description:
+      "Keep using the last confirmed bbox for up to N missing frames to smooth brief detector dropouts. Takes effect immediately.",
+    tab: "advanced",
+  },
+  pose_bbox_fallback_to_full_frame: {
+    label: "Fallback to full-frame Pose",
+    description:
+      "If YOLO11n cannot provide a stable bbox or the cropped Pose pass fails, fall back to the original full-frame Pose path. Takes effect immediately.",
     tab: "advanced",
   },
 };
@@ -845,6 +929,20 @@ export default function SettingsPage() {
                 "pose_min_torso_span",
                 "pose_presence_confirm_frames",
               ].map(renderField)}
+              <Separator className="my-4" />
+
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                {t("settings.sectionPersonDetector")}
+              </h3>
+              {[
+                "pose_bbox_first_enabled",
+                "pose_bbox_confidence_threshold",
+                "pose_bbox_padding_ratio",
+                "pose_bbox_min_area_ratio",
+                "pose_bbox_confirm_frames",
+                "pose_bbox_lost_frames",
+                "pose_bbox_fallback_to_full_frame",
+              ].map(renderField)}
             </CardContent>
           </Card>
         </TabsContent>
@@ -908,6 +1006,21 @@ function getNumberRange(
   }
   if (key === "pose_presence_confirm_frames") {
     return { min: 1, max: 10, step: 1 };
+  }
+  if (key === "pose_bbox_confidence_threshold") {
+    return { min: 0.1, max: 1.0, step: 0.05 };
+  }
+  if (key === "pose_bbox_padding_ratio") {
+    return { min: 0, max: 0.5, step: 0.01 };
+  }
+  if (key === "pose_bbox_min_area_ratio") {
+    return { min: 0.001, max: 0.5, step: 0.001 };
+  }
+  if (key === "pose_bbox_confirm_frames") {
+    return { min: 1, max: 10, step: 1 };
+  }
+  if (key === "pose_bbox_lost_frames") {
+    return { min: 0, max: 30, step: 1 };
   }
   return { min: 0, max: Math.max(currentValue * 3, 100), step: 1 };
 }

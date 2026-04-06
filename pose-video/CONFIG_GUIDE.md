@@ -48,6 +48,56 @@
 | `pose_min_torso_span` | float | `0.16` | **最小躯干跨度**。同侧肩髋的最小纵向距离。用于拦截缩成一小团、但 visibility 偏高的假人体关键点 |
 | `pose_presence_confirm_frames` | int | `3` | **人体确认帧数**。从 `AWAY` / `DETECT_FAILED` 恢复前，连续多少帧通过人体存在门槛才确认有人，抑制闪烁式误检 |
 
+### YOLO11n 人体框预检测（bbox-first）
+
+当 `pose_bbox_first_enabled=True` 时，程序会先使用 **YOLO11n** 检测 `person` 框，再只在该 bbox crop 内运行 MediaPipe Pose，最后把 landmarks 映射回全图坐标，继续复用现有的人体 presence gate、骨骼 overlay、坐姿/久坐/驼背逻辑。
+
+如果本机尚未缓存权重，`ultralytics` 会在第一次启用 bbox-first 时自动下载 `yolo11n.pt`。
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `pose_bbox_first_enabled` | bool | `False` | 是否启用 `YOLO11n -> person bbox -> crop 内 Pose` 的前置检测方案。关闭时保持原有全图 MediaPipe Pose 流程 |
+| `pose_bbox_confidence_threshold` | float | `0.35` | YOLO11n 接受 `person` bbox 的最低置信度。值越高越保守，值越低越容易引入背景误检 |
+| `pose_bbox_padding_ratio` | float | `0.12` | bbox 四周的扩边比例。用于给 MediaPipe Pose 留出手臂、头顶等边缘区域，避免裁得过紧 |
+| `pose_bbox_min_area_ratio` | float | `0.02` | bbox 至少要占整帧面积的多少比例才会被接受。适合过滤很远、很小或碎片化的 `person` 误检 |
+| `pose_bbox_confirm_frames` | int | `2` | 连续多少帧检测到相近 bbox 后才把它视为稳定人体框，减少抖动和闪烁 |
+| `pose_bbox_lost_frames` | int | `5` | 稳定 bbox 丢失后，最多还能沿用上一次 bbox 多少帧。用于平滑短时 detector 抖动 |
+| `pose_bbox_fallback_to_full_frame` | bool | `True` | 如果 YOLO11n 没找到稳定 bbox，或者 crop 内的 MediaPipe Pose 没出结果，是否回退到旧的全图 Pose 路径 |
+
+> 建议从 `pose_bbox_first_enabled=True`、`pose_bbox_fallback_to_full_frame=True` 开始验证；这样即使 YOLO11n 暂时失手，也不会直接让整条链路退化成“无人”。
+
+> `pose_bbox_confirm_frames` 和 `pose_bbox_lost_frames` 是 bbox-first 自身的稳定化层；即使开启 bbox-first，现有 `pose_presence_*` 人体存在门槛仍会作为第二层过滤继续生效。
+
+### diagnostics 下可见的 bbox 信息
+
+开启 `--diagnostics` 后，如果 `pose_bbox_first_enabled=True`，画面上会额外显示：
+
+- 当前 bbox 状态：`candidate / confirmed / holding`
+- 当前 Pose 来源：`bbox / full_frame_fallback / full_frame`
+- bbox 置信度、面积占比、confirm/lost 计数
+- 当前 fallback 原因（例如 `no_person`、`below_min_area`、`crop_pose_failed`）
+
+终端诊断日志也会增加 bbox 相关统计：raw bbox 命中数、confirmed 命中数、holding 次数、full-frame fallback 次数。
+
+### 运行方式
+
+首次安装新增依赖：
+
+```bash
+pip install -r requirements.txt
+```
+
+启用 bbox-first 的典型运行方式不变，配置建议优先通过后端 settings 页面下发；本地直跑时也可以直接修改 `CONFIG` 默认值：
+
+```bash
+python pose_detect_mediapipe.py \
+ --api-url http://localhost:8000 \
+ --stream-port 8080 \
+ --device-token <your-device-token> \
+ --config-interval 10 \
+ --diagnostics --diag-interval 5
+```
+
 > **调参建议**：像你截图里这种贴着地面的小团关键点，优先看 `pose_presence_in_frame_margin` 和 `pose_min_torso_span`。前者处理关键点跑出画面的问题，后者处理明明在画面里但整体尺寸明显不对的问题。
 
 ---

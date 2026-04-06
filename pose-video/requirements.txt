@@ -3,3 +3,4 @@ mediapipe>=0.10
 numpy>=1.24
 Pillow>=10.0
 requests>=2.31
+ultralytics>=8.3
