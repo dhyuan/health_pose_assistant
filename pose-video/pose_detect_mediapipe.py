@@ -85,6 +85,7 @@ CONFIG = {
     "pose_bbox_confirm_frames": 2,
     "pose_bbox_lost_frames": 5,
     "pose_bbox_fallback_to_full_frame": True,
+    "pose_bbox_overlay_debug_enabled": False,
     # ── 坐姿检测 ──────────────────────────────────────────────
     "posture_torso_threshold": 145,  # 躯干角 < 此值 → 驼背警告（度）。
     "posture_head_forward_threshold": 0.05,  # 头部前倾阈值（鼻子相对肩膀的x位移 > 此值 → 头部前倾）
@@ -642,7 +643,7 @@ def _bbox_status_color(status: str):
     return (0, 140, 255)
 
 
-def draw_bbox_overlay(frame, bbox_info: dict, diagnostics: bool = False):
+def draw_bbox_overlay(frame, bbox_info: dict, show_debug_text: bool = False):
     draw_bbox = bbox_info.get("draw_bbox")
     if draw_bbox is not None:
         x1, y1, x2, y2 = [int(v) for v in draw_bbox]
@@ -664,8 +665,10 @@ def draw_bbox_overlay(frame, bbox_info: dict, diagnostics: bool = False):
             cv2.LINE_AA,
         )
 
-    if not diagnostics:
+    if not show_debug_text:
         return
+
+    frame_h, frame_w = frame.shape[:2]
 
     lines = [
         f"BBox: {bbox_info.get('status', 'disabled')} src={bbox_info.get('source', 'full_frame')}",
@@ -678,15 +681,15 @@ def draw_bbox_overlay(frame, bbox_info: dict, diagnostics: bool = False):
         + f"confirm={bbox_info.get('candidate_hits', 0)}/{bbox_info.get('confirm_frames', 1)}",
         f"lost={bbox_info.get('lost_count', 0)}/{bbox_info.get('lost_frames', 0)} reason={bbox_info.get('fallback_reason', '-')}",
     ]
-    x = 10
-    y = 22
+    x = max(int(frame_w * 0.58), frame_w - 420)
+    y = max(int(frame_h * 0.42), 120)
     for line in lines:
         cv2.putText(
             frame,
             line,
             (x, y),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.48,
+            0.5,
             (30, 30, 30),
             3,
             cv2.LINE_AA,
@@ -696,12 +699,12 @@ def draw_bbox_overlay(frame, bbox_info: dict, diagnostics: bool = False):
             line,
             (x, y),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.48,
+            0.5,
             (230, 230, 230),
             1,
             cv2.LINE_AA,
         )
-        y += 18
+        y += 22
 
 
 def draw_pose_landmarks_colored(frame, landmarks, pose_connections):
@@ -2038,7 +2041,11 @@ def main(args):
 
             # ── 画面叠加 ──────────────────────────────────────
             if bbox_info.get("enabled") and bbox_info.get("draw_bbox") is not None:
-                draw_bbox_overlay(frame, bbox_info, diagnostics=args.diagnostics)
+                draw_bbox_overlay(
+                    frame,
+                    bbox_info,
+                    show_debug_text=cfg.get("pose_bbox_overlay_debug_enabled", False),
+                )
             draw_overlay(frame, sm_result, exercise, current_fps, cfg)
 
             # ── MJPEG 推流 ────────────────────────────────────

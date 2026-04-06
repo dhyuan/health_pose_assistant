@@ -89,6 +89,7 @@ _CFG_DIRECT_KEYS = {
     "pose_bbox_confirm_frames",
     "pose_bbox_lost_frames",
     "pose_bbox_fallback_to_full_frame",
+    "pose_bbox_overlay_debug_enabled",
 }
 
 

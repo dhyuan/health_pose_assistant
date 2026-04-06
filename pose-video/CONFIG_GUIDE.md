@@ -63,6 +63,7 @@
 | `pose_bbox_confirm_frames` | int | `2` | 连续多少帧检测到相近 bbox 后才把它视为稳定人体框，减少抖动和闪烁 |
 | `pose_bbox_lost_frames` | int | `5` | 稳定 bbox 丢失后，最多还能沿用上一次 bbox 多少帧。用于平滑短时 detector 抖动 |
 | `pose_bbox_fallback_to_full_frame` | bool | `True` | 如果 YOLO11n 没找到稳定 bbox，或者 crop 内的 MediaPipe Pose 没出结果，是否回退到旧的全图 Pose 路径 |
+| `pose_bbox_overlay_debug_enabled` | bool | `False` | 是否把 bbox 调试文字直接叠加到视频画面右侧中部。适合远程看流调参；关闭后仍保留 bbox 矩形 |
 
 > 建议从 `pose_bbox_first_enabled=True`、`pose_bbox_fallback_to_full_frame=True` 开始验证；这样即使 YOLO11n 暂时失手，也不会直接让整条链路退化成“无人”。
 
@@ -70,14 +71,14 @@
 
 ### diagnostics 下可见的 bbox 信息
 
-开启 `--diagnostics` 后，如果 `pose_bbox_first_enabled=True`，画面上会额外显示：
+当 `pose_bbox_overlay_debug_enabled=True` 时，画面右侧中部会额外显示：
 
 - 当前 bbox 状态：`candidate / confirmed / holding`
 - 当前 Pose 来源：`bbox / full_frame_fallback / full_frame`
 - bbox 置信度、面积占比、confirm/lost 计数
 - 当前 fallback 原因（例如 `no_person`、`below_min_area`、`crop_pose_failed`）
 
-终端诊断日志也会增加 bbox 相关统计：raw bbox 命中数、confirmed 命中数、holding 次数、full-frame fallback 次数。
+开启 `--diagnostics` 后，终端日志还会增加 bbox 相关统计：raw bbox 命中数、confirmed 命中数、holding 次数、full-frame fallback 次数。
 
 ### 运行方式
 

@@ -65,6 +65,7 @@ DEFAULT_CONFIG: dict = {
     "pose_bbox_confirm_frames": 2,
     "pose_bbox_lost_frames": 5,
     "pose_bbox_fallback_to_full_frame": True,
+    "pose_bbox_overlay_debug_enabled": False,
     # Sit/stand thresholds (desk-side calibrated)
     "sitting_torso_span_threshold": 0.27,
     "sitting_hip_y_threshold": 0.44,

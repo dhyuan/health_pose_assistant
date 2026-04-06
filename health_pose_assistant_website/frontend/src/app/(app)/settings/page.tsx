@@ -279,6 +279,12 @@ const FIELD_META_ZH: Record<string, FieldMeta> = {
       "当 YOLO11n 没找到稳定 bbox 或 crop 内 Pose 失败时，是否回退到原有 full-frame Pose。即时生效。",
     tab: "advanced",
   },
+  pose_bbox_overlay_debug_enabled: {
+    label: "在视频上显示 BBox 调试信息",
+    description:
+      "是否把 bbox 的状态、来源、confirm/lost 计数等调试文字叠加到视频右侧中部。即时生效。",
+    tab: "advanced",
+  },
 };
 
 const FIELD_META_EN: Record<string, FieldMeta> = {
@@ -512,6 +518,12 @@ const FIELD_META_EN: Record<string, FieldMeta> = {
     label: "Fallback to full-frame Pose",
     description:
       "If YOLO11n cannot provide a stable bbox or the cropped Pose pass fails, fall back to the original full-frame Pose path. Takes effect immediately.",
+    tab: "advanced",
+  },
+  pose_bbox_overlay_debug_enabled: {
+    label: "Show bbox debug info on video",
+    description:
+      "Overlay bbox state, source, and confirm/lost counters on the right-middle area of the video. Takes effect immediately.",
     tab: "advanced",
   },
 };
@@ -942,6 +954,7 @@ export default function SettingsPage() {
                 "pose_bbox_confirm_frames",
                 "pose_bbox_lost_frames",
                 "pose_bbox_fallback_to_full_frame",
+                "pose_bbox_overlay_debug_enabled",
               ].map(renderField)}
             </CardContent>
           </Card>
