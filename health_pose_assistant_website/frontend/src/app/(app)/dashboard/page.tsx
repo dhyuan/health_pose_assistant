@@ -9,6 +9,14 @@ import { useI18n } from "@/i18n/provider";
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
+const MINUTES_PER_HOUR = 60;
+
+function formatHourValue(value: number): string {
+  return (Math.round((value + Number.EPSILON) * 10) / 10)
+    .toFixed(1)
+    .replace(/\.0$/, "");
+}
+
 export default function DashboardPage() {
   const { t } = useI18n();
   const [data, setData] = useState<DashboardData | null>(null);
@@ -57,8 +65,8 @@ export default function DashboardPage() {
     },
     {
       title: t("dashboard.sittingDuration"),
-      value: data.today.sitting_minutes,
-      unit: t("dashboard.minutes"),
+      value: formatHourValue(data.today.sitting_minutes / MINUTES_PER_HOUR),
+      unit: t("dashboard.hours"),
       color: "text-blue-600",
     },
     {

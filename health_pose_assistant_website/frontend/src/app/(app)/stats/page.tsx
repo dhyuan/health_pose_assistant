@@ -52,6 +52,14 @@ const CHART_COLORS = {
   away_count: "#22c55e",
 };
 
+const MINUTES_PER_HOUR = 60;
+
+function formatHourValue(value: number): string {
+  return (Math.round((value + Number.EPSILON) * 10) / 10)
+    .toFixed(1)
+    .replace(/\.0$/, "");
+}
+
 function StatsPageInner() {
   const { t, dateFnsLocale } = useI18n();
   const searchParams = useSearchParams();
@@ -145,7 +153,7 @@ function StatsPageInner() {
     () => ({
       bad_posture_count: t("stats.badPostureCount"),
       prolonged_alert_count: t("stats.prolongedAlertCount"),
-      sitting_minutes: t("stats.sittingMinutes"),
+      sitting_minutes: t("stats.sittingHours"),
       away_count: t("stats.awayCount"),
     }),
     [t],
@@ -160,6 +168,7 @@ function StatsPageInner() {
         bad_posture_count: number;
         prolonged_alert_count: number;
         sitting_minutes: number;
+        sitting_hours: number;
         away_count: number;
       }
     >();
@@ -176,9 +185,13 @@ function StatsPageInner() {
           bad_posture_count: s.bad_posture_count,
           prolonged_alert_count: s.prolonged_alert_count,
           sitting_minutes: s.sitting_minutes,
+          sitting_hours: s.sitting_minutes / MINUTES_PER_HOUR,
           away_count: s.away_count,
         });
       }
+    }
+    for (const item of map.values()) {
+      item.sitting_hours = item.sitting_minutes / MINUTES_PER_HOUR;
     }
     return Array.from(map.values()).sort((a, b) =>
       a.date.localeCompare(b.date),
@@ -376,17 +389,26 @@ function StatsPageInner() {
                             tick={{ fontSize: 12 }}
                             tickFormatter={(v: string) => v.slice(5)} // MM-DD
                           />
-                          <YAxis tick={{ fontSize: 12 }} />
+                          <YAxis
+                            tick={{ fontSize: 12 }}
+                            tickFormatter={(value: number) =>
+                              formatHourValue(value)
+                            }
+                          />
                           <Tooltip
                             labelFormatter={(label) =>
                               format(new Date(String(label)), "PP", {
                                 locale: dateFnsLocale,
                               })
                             }
+                            formatter={(value: number) => [
+                              `${formatHourValue(value)} ${t("stats.hoursUnit")}`,
+                              chartLabels[key],
+                            ]}
                           />
                           <Legend />
                           <Bar
-                            dataKey={key}
+                            dataKey="sitting_hours"
                             name={chartLabels[key]}
                             fill={
                               CHART_COLORS[key as keyof typeof CHART_COLORS]
